@@ -3,6 +3,7 @@ import Mathlib.Data.Multiset.AddSub
 import Mathlib.Data.Multiset.Filter
 import Mathlib.Data.Multiset.ZeroCons
 import Mathlib.Logic.Relation
+import Bakery.DMC
 
 inductive Mode where
   | idle
@@ -460,104 +461,81 @@ lemma crit_initOrWaitOrCrit {cf cf' : Conf} :
 def inv_pred (cf : Conf) : Prop :=
   init_pred cf ∨ wait_pred cf ∨ crit_pred cf
 
-lemma inv_ind {cf cf' : Conf} :
-    (inv_pred cf ∧ (cf ⇒ cf')) →
-    (inv_pred cf') := by sorry
+instance : IndInv Conf inv_pred init_pred Step where
+  base := by
+    intro cf h; unfold inv_pred; left; apply h
+  ind := by
+    intro cf cf' ⟨hinv,hstep⟩
+    unfold inv_pred at *
+    rcases hinv with hinit | hwait | hcrit
+    · have hcf' := init_wait ⟨hinit,hstep⟩; right; left; apply hcf'
+    · have hcf' := wait_waitOrCrit ⟨hwait,hstep⟩; right; apply hcf'
+    · have hcf' := crit_initOrWaitOrCrit ⟨hcrit,hstep⟩; apply hcf'
 
-def mutex_pred (cf : Conf) : Prop := sorry
+def two_crits (cf : Conf) : Prop :=
+  ∃ (n m : Nat) (ps : ProcSet), cf.c = $[crit n] ::ₘ $[crit m] ::ₘ ps
 
-lemma inv_mutex : ∀ (cf : Conf), inv_pred cf → mutex_pred cf := sorry
+lemma inv_mutex : ∀ (cf : Conf), inv_pred cf → ¬ two_crits cf := by
+  intro cf hinv hbad
+  unfold inv_pred at hinv
+  rcases hinv with hinit | hwait | hcrit
+  · simp [two_crits, init_pred] at *
+    rcases hbad with ⟨n,m,ps,hcf⟩
+    rw [hcf] at hinit
+    simp [is] at hinit
+  · simp [two_crits, wait_pred] at *
+    rcases hbad with ⟨n,m,ps,hcf⟩
+    rw [hcf] at hwait
+    simp [ws] at hwait
+  · simp [two_crits, crit_pred] at *
+    rcases hbad with ⟨n,m,ps,hcf⟩
+    rcases hcrit.2 with ⟨ps',h1,h2,h3,h4⟩
+    rw [hcf] at h1
+    -- Compare the two `cons`-lists on the left/right
+    have hcases := Multiset.cons_eq_cons.mp h1
+    -- `hcases` is a disjunction of the two standard multiset-cons cases
+    cases hcases with
+    | inl h =>
+        -- Case 1: heads equal, tails equal
+        --   $[crit n] = $[crit cf.s] ∧ $[crit m] ::ₘ ps = ps'
+        have h_tail : $[Mode.crit m] ::ₘ ps = ps' := h.2
+        -- So $[crit m] ∈ ps'
+        have hmem_crit_m : $[Mode.crit m] ∈ ps' := by
+          have : $[Mode.crit m] ∈ $[Mode.crit m] ::ₘ ps := by simp
+          simpa [h_tail] using this
+        -- But ws ps' says elements of ps' are idle or wait, never crit
+        have hwsp := h2 $[Mode.crit m] hmem_crit_m
+        cases hwsp with
+        | inl h_idle =>
+            -- $[crit m] = $[idle]  (impossible: different constructors)
+            cases h_idle
+        | inr h_wait =>
+            -- ∃ t, $[crit m] = $[wait t] (also impossible)
+            rcases h_wait with ⟨t, h_eq⟩
+            cases h_eq
 
-theorem bakery_mutex {cf cf' : Conf} :
-    (init_pred cf ∧ (cf ⇒* cf')) →
-    (mutex_pred cf') := by sorry
-
-
-
-
------------------------
---- Meta Properties ---
------------------------
-
-
-class IndInv (pred : Conf → Prop) (init : Conf → Prop) (step : Conf → Conf → Prop) where
-    base : ∀ cf : Conf, init cf → pred cf
-    ind : ∀ (cf cf' : Conf), (pred cf ∧ (step cf cf')) → (pred cf')
-
-variable {pred init : Conf → Prop}
-variable {step : Conf → Conf → Prop}
-
-theorem invariant
-    [hInv : IndInv pred init step]
-    {cf cf' : Conf}
-    (h0 : init cf)
-    (hrt : Relation.ReflTransGen step cf cf') :
-    pred cf' := by
-  induction hrt with
-  | refl =>
-      -- this case is cf' = cf
-      -- so we just use base
-      have : pred cf := hInv.base cf h0
-      -- x is definitionaly cf, so:
-      simpa using this
-  | tail hxy hyz ih =>
-      -- hxy : ReflTransGen step cf ?y
-      -- hyz : step ?y ?z
-      -- ih  : pred ?y
-      have hpair : pred _ ∧ step _ _ := ⟨ih, hyz⟩
-      exact hInv.ind _ _ hpair
-
---- Conjunction of invariants is an invariant
-instance IndInvConj
-    (pred₁ pred₂ init step)
-    [h1 : IndInv pred₁ init step]
-    [h2 : IndInv pred₂ init step] :
-    IndInv (fun cf => pred₁ cf ∧ pred₂ cf) init step where
-  base cf h0 :=
-    ⟨h1.base cf h0, h2.base cf h0⟩
-  ind cf cf' h := by
-    rcases h with ⟨⟨hp1, hp2⟩, hstep⟩
-    exact ⟨h1.ind cf cf' ⟨hp1, hstep⟩, h2.ind cf cf' ⟨hp2, hstep⟩⟩
-
---- “Safety” meta-theorem: no bad state is reachable
-def Safe (init : Conf → Prop) (step : Conf → Conf → Prop) (Bad : Conf → Prop) : Prop :=
-  ∀ cf cf', init cf → Relation.ReflTransGen step cf cf' → ¬ Bad cf'
-
-theorem IndInv.safe
-    {pred init : Conf → Prop} {step : Conf → Conf → Prop}
-    [IndInv pred init step]
-    (Bad : Conf → Prop)
-    (hExclude : ∀ cf, pred cf → ¬ Bad cf) :
-    Safe init step Bad := by
-  intro cf cf' h0 hreach
-  -- from inductive invariant:
-  have hp : pred cf' :=
-    invariant (pred:=pred) (init:=init) (step:=step) h0 hreach
-  exact hExclude cf' hp
+    | inr h =>
+        -- Case 2: heads not equal, but lists equal up to swapping
+        --   $[crit n] ≠ $[crit cf.s] ∧
+        --   ∃ cs, $[crit m] ::ₘ ps = $[crit cf.s] ::ₘ cs ∧ ps' = $[crit n] ::ₘ cs
+        rcases h with ⟨hne, cs, h_eq1, h_eq2⟩
+        -- From ps' = $[crit n] ::ₘ cs, we get $[crit n] ∈ ps'
+        have hmem_crit_n : $[Mode.crit n] ∈ ps' := by
+          have : $[Mode.crit n] ∈ $[Mode.crit n] ::ₘ cs := by simp
+          simpa [h_eq2] using this
+        -- Again, ws ps' forbids crit
+        have hwsp := h2 $[Mode.crit n] hmem_crit_n
+        cases hwsp with
+        | inl h_idle =>
+            -- $[crit n] = $[idle] (impossible)
+            cases h_idle
+        | inr h_wait =>
+            rcases h_wait with ⟨t, h_eq⟩
+            cases h_eq
 
 
---- Restricting the initial set
-theorem IndInv.restrict_init
-    {pred init init' : Conf → Prop} {step : Conf → Conf → Prop}
-    [hInv : IndInv pred init step]
-    (hSub : ∀ cf, init' cf → init cf) :
-    IndInv pred init' step where
-  base cf h0 :=
-    hInv.base cf (hSub cf h0)
-  ind cf cf' h :=
-    hInv.ind cf cf' h
-
---- Invariants for an equivalent step relation
-theorem IndInv.congr_step
-    {pred init : Conf → Prop}
-    {step₁ step₂ : Conf → Conf → Prop}
-    (hEq : ∀ cf cf', step₁ cf cf' ↔ step₂ cf cf')
-    [hInv : IndInv pred init step₁] :
-    IndInv pred init step₂ where
-  base cf h0 := hInv.base cf h0
-  ind cf cf' h := by
-    -- h : pred cf ∧ step₂ cf cf'
-    have h' : pred cf ∧ step₁ cf cf' :=
-      ⟨h.1, (hEq cf cf').mpr h.2⟩
-    -- reuse old instance
-    exact hInv.ind cf cf' h'
+theorem mutex : ∀ cf cf', init_pred cf → cf ⇒* cf' → ¬ two_crits cf' := by
+  intro cf cf' hinit hstep hbad
+  have h := IndInv.safe1 (step:=Step) (init:=init_pred) (Bad:=two_crits) inv_mutex
+  unfold Safe at h
+  exact h cf cf' hinit hstep hbad
