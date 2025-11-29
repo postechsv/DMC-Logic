@@ -162,6 +162,7 @@ lemma freshness :
     (Multiset.nodup_cons.1 hnodup).1
   exact hn_not h3
 
+
 lemma no_nat_between (m k : ℕ) (h : m < k ∧ k < m + 1) : False := by
   have hmk : m < k := h.1
   have hkm1 : k < m + 1 := h.2
@@ -175,29 +176,49 @@ lemma no_nat_between (m k : ℕ) (h : m < k ∧ k < m + 1) : False := by
   exact lt_irrefl _ hmm
 
 
-
 lemma is_of_no_tickets
   (ps : ProcSet)
   (hk_false : ∀ k ∈ tickets ps, False) :
   is ps := by
+  -- We need to show that for any process `m` in `ps`, `m` must be `$[idle]`.
   intro m hm
-  -- m : Proc
-  -- split on Proc first
-  cases m with
+  -- Let's consider the mode of `m`. It must be one of the three possibilities: `idle`, `wait n`, or `crit n`.
+  cases h_mode : m with
   | proc mode =>
-      -- now mode : Mode
-      cases mode with
-      | idle => rfl
-      | wait n => sorry
-      | crit n => sorry
-          -- m = $[Mode.crit n]
-          -- have : n ∈ tickets ps := by
-          --   classical
-          --   dsimp [tickets]
-          --   apply (Multiset.mem_filterMap.2 ?_)
-          --   refine ⟨$[Mode.crit n], hm, ?_⟩
-          --   simp [Proc.ticket?]     -- ticket? $[crit n] = some n
-          -- exact (hk_false n this).elim
+    -- We want to prove `m = $[idle]`, which is equivalent to `mode = Mode.idle`
+    cases mode with
+    -- Case 1: mode is `idle`. This is the conclusion we want.
+    | idle =>
+      simp [h_mode]
+    -- Case 2: mode is `wait n`.
+    | wait n =>
+      -- If the mode is `wait n`, then `n` is a ticket in `tickets ps`.
+      have hn : n ∈ tickets ps := by
+        -- The definition of `tickets ps` is `ps.filterMap Proc.ticket?`.
+        -- We can use `Multiset.mem_filterMap.mpr`
+        rw [tickets, Multiset.mem_filterMap]
+        -- We need to show there exists an element `x` in `ps` such that `Proc.ticket? x = some n`.
+        use m
+        -- `m` is in `ps` by assumption.
+        constructor; exact hm
+        -- Show `Proc.ticket? m = some n`.
+        rw [h_mode, Proc.ticket?]
+      -- We are given that no element is in `tickets ps`, so `n ∈ tickets ps` must be false.
+      exact False.elim (hk_false n hn)
+    -- Case 3: mode is `crit n`.
+    | crit n =>
+      -- If the mode is `crit n`, then `n` is a ticket in `tickets ps`.
+      have hn : n ∈ tickets ps := by
+        -- Use `Multiset.mem_filterMap.mpr` again.
+        rw [tickets, Multiset.mem_filterMap]
+        -- The element is `m`.
+        use m
+        -- `m` is in `ps` by assumption.
+        constructor; exact hm
+        -- Show `Proc.ticket? m = some n`.
+        rw [h_mode, Proc.ticket?]
+      -- Given that no element is in `tickets ps`, this must be false.
+      exact False.elim (hk_false n hn)
 
 
 lemma is_cons_idle_of_no_tickets
