@@ -162,6 +162,56 @@ lemma freshness :
     (Multiset.nodup_cons.1 hnodup).1
   exact hn_not h3
 
+lemma no_nat_between (m k : ℕ) (h : m < k ∧ k < m + 1) : False := by
+  have hmk : m < k := h.1
+  have hkm1 : k < m + 1 := h.2
+  -- rewrite m + 1 as succ
+  have hkm_succ : k < m.succ := by
+    simpa [Nat.succ_eq_add_one] using hkm1
+  -- from k < m.succ we get k ≤ m
+  have hkm_le : k ≤ m := (Nat.lt_succ_iff.mp hkm_succ)
+  -- chain m < k ≤ m to get m < m
+  have hmm : m < m := lt_of_lt_of_le hmk hkm_le
+  exact lt_irrefl _ hmm
+
+
+
+lemma is_of_no_tickets
+  (ps : ProcSet)
+  (hk_false : ∀ k ∈ tickets ps, False) :
+  is ps := by
+  intro m hm
+  -- m : Proc
+  -- split on Proc first
+  cases m with
+  | proc mode =>
+      -- now mode : Mode
+      cases mode with
+      | idle => rfl
+      | wait n => sorry
+      | crit n => sorry
+          -- m = $[Mode.crit n]
+          -- have : n ∈ tickets ps := by
+          --   classical
+          --   dsimp [tickets]
+          --   apply (Multiset.mem_filterMap.2 ?_)
+          --   refine ⟨$[Mode.crit n], hm, ?_⟩
+          --   simp [Proc.ticket?]     -- ticket? $[crit n] = some n
+          -- exact (hk_false n this).elim
+
+
+lemma is_cons_idle_of_no_tickets
+  (ps : ProcSet)
+  (hk_false : ∀ k ∈ tickets ps, False) :
+  is ($[idle] ::ₘ ps) := by
+  have his : is ps := is_of_no_tickets ps hk_false
+  intro m hm
+  have hcases : m = $[idle] ∨ m ∈ ps := by
+    simpa [Multiset.mem_cons] using hm
+  cases hcases with
+  | inl h => simp [h]
+  | inr hmps => exact his m hmps
+
 
 ----------------------------
 --- Inductive Invariants ---
@@ -185,7 +235,7 @@ def crit_pred (cf : Conf) : Prop :=
     ((tickets ps).Nodup)
 
 
-lemma idle_wait {cf cf' : Conf} :
+lemma init_wait {cf cf' : Conf} :
     (init_pred cf ∧ (cf ⇒ cf')) →
     wait_pred cf' := by
   simp [init_pred, wait_pred, is, ws]
@@ -271,9 +321,9 @@ lemma wait_waitOrCrit {cf cf' : Conf} :
         exact lt_irrefl n hn.2
       · exact nodup_down $[idle] ps hnodup
 
-lemma crit_wait {cf cf' : Conf} :
+lemma crit_initOrWaitOrCrit {cf cf' : Conf} :
     (crit_pred cf ∧ (cf ⇒ cf')) →
-    (wait_pred cf') := by
+    (init_pred cf' ∨ wait_pred cf' ∨ crit_pred cf') := by
   intro ⟨⟨hts,ps',h1,hws,hk,hnodup⟩,hstep⟩
   cases hstep with
   | crit n m ps =>
@@ -292,8 +342,97 @@ lemma crit_wait {cf cf' : Conf} :
       apply hk at hm; simp at hm
   | exit n m ps =>
       simp at *
-      sorry
-  | wake n m ps => sorry
+      · by_cases hmn : m + 1 = n
+        · left; simp [←hmn, init_pred] at *
+          have hk_false : ∀ k ∈ tickets ps', False := by
+            intro k hk'
+            exact no_nat_between m k (hk k hk')
+          rw [←h1] at hk_false
+          have : is ($[idle] ::ₘ ps) :=
+            is_cons_idle_of_no_tickets ps hk_false
+          apply this
+        · right; left; simp [wait_pred]
+          constructor
+          · have hlt : m + 1 < n := by
+              have hle : m + 1 ≤ n := by
+                simpa [Nat.succ_eq_add_one] using Nat.succ_le_of_lt hts
+              exact lt_of_le_of_ne hle hmn
+            exact hlt
+          constructor
+          · simp [ws] at *; simpa [hws, h1]
+          constructor
+          · intro k hk'
+            apply tickets_down $[idle] ps at hk'
+            rcases hk' with hk'A | hk'B
+            · simp [ticket?] at hk'A
+            · rw [h1] at hk'B
+              apply hk at hk'B
+              exact ⟨by
+                have := Nat.succ_le_of_lt hk'B.1
+                simpa [Nat.succ_eq_add_one] using this,
+              hk'B.2⟩
+          · rw [←h1] at hnodup
+            simpa [tickets, Proc.ticket?] using hnodup
+  | wake n m ps =>
+      simp at *; right; right
+      simp [crit_pred]
+      constructor
+      · exact (lt_trans hts (Nat.lt_succ_self n))
+      · have hps'' : ∃ps'' : ProcSet, ps = $[crit m] ::ₘ ps'' := by
+          have hcrit_R : $[Mode.crit m] ∈ ($[Mode.crit m] ::ₘ ps') := by
+            simp
+          have hcrit_L : $[Mode.crit m] ∈ ($[Mode.idle] ::ₘ ps) := by
+            simpa [h1] using hcrit_R
+          have hcrit_cases : $[Mode.crit m] = $[Mode.idle] ∨ $[Mode.crit m] ∈ ps :=
+            (Multiset.mem_cons).1 hcrit_L
+          have hcrit_ps : $[Mode.crit m] ∈ ps := by
+            cases hcrit_cases with
+            | inl h => cases h
+            | inr h => exact h
+          obtain ⟨ps'', hps''⟩ := Multiset.exists_cons_of_mem hcrit_ps
+          exact ⟨ps'', hps''⟩
+        rcases hps'' with ⟨ps'',hps''1⟩
+        have hps''2 : ps' = $[idle] ::ₘ ps'' := by
+          have h1' :
+            $[idle] ::ₘ $[crit m] ::ₘ ps'' = $[crit m] ::ₘ ps' := by
+            simpa [hps''1] using h1
+          have h1'' :
+            $[crit m] ::ₘ $[idle] ::ₘ ps'' = $[crit m] ::ₘ ps' := by
+            simpa [Multiset.cons_swap] using h1'
+          have hps' : $[idle] ::ₘ ps'' = ps' := by
+            simpa [Multiset.cons_eq_cons] using h1''
+          simp [hps']
+        exists $[wait n] ::ₘ ps''
+        constructor
+        · simp [hps''1]
+          exact Multiset.cons_swap _ _ _
+        constructor
+        · simp [ws]
+          simpa [ws, hps''2] using hws
+        constructor
+        · intro k hk'
+          rw [hps''2] at hk
+          simp [tickets] at hk'
+          rcases hk' with hk'A | hk'B
+          · simp [ticket?] at hk'A -- n = k
+            rw [←hk'A]; simpa
+          · simp [tickets] at hk
+            have hk := hk k
+            have hk := hk (Or.inr hk'B)
+            exact ⟨hk.1, lt_trans hk.2 (Nat.lt_succ_self _)⟩
+        · apply nodup_up
+          · simp [ticket?]; rfl
+          · intro hn
+            have hn' : n ∈ tickets ps' := by
+              -- rewrite ps' and simplify tickets on cons idle
+              simpa [tickets, hps''2, Proc.ticket?] using hn
+
+            -- now apply hk at k = n
+            have hbounds : m < n ∧ n < n := hk n hn'
+            have hlt : n < n := hbounds.2
+            exact lt_irrefl _ hlt
+          · rw [hps''2] at hnodup
+            simpa [tickets, Proc.ticket?] using hnodup
 
 
 
