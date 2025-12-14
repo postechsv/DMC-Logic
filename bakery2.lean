@@ -67,3 +67,25 @@ def Proc.ticket? : Proc → Option Nat
 
 --- return the set of all ticket numbers in a procset
 def tickets (ps : ProcSet) : Multiset Nat := ps.filterMap Proc.ticket?
+
+
+----------------------------
+--- Inductive Invariants ---
+----------------------------
+
+def init_pred (cf : Conf) : Prop :=
+  cf.t = cf.s ∧ is cf.c
+
+#check init_pred
+
+def wait_pred (cf : Conf) : Prop :=
+  cf.t > cf.s ∧ ws cf.c ∧ (∀ k ∈ tickets cf.c, k ≥ cf.s ∧ k < cf.t) ∧ ((tickets cf.c).Nodup)
+
+
+def crit_pred (cf : Conf) : Prop :=
+  cf.t > cf.s ∧
+  ∃ ps : ProcSet,
+    cf.c = {$[crit cf.s]} + ps ∧
+    ws ps ∧
+    (∀ k ∈ tickets ps, k > cf.s ∧ k < cf.t) ∧
+    ((tickets ps).Nodup)
