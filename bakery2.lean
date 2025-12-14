@@ -41,8 +41,7 @@ inductive Step : Conf → Conf → Prop where
            {t := n, s := succ m, c := {$[idle]} + ps}
 
 --- DMC: Define the System instance for Conf
-instance : System Conf where
-  step := Step
+instance : System Conf := ⟨Step⟩
 
 
 def init1 : Conf :=
@@ -69,14 +68,17 @@ def Proc.ticket? : Proc → Option Nat
 def tickets (ps : ProcSet) : Multiset Nat := ps.filterMap Proc.ticket?
 
 
-----------------------------
---- Inductive Invariants ---
-----------------------------
+---------------------------
+--- Inductive Invariant ---
+---------------------------
 
 def init_pred (cf : Conf) : Prop :=
   cf.t = cf.s ∧ is cf.c
 
-#check init_pred
+--- DMC: Define the ISystem instance for Conf
+instance : ISystem Conf where
+  init := init_pred
+  step := Step
 
 def wait_pred (cf : Conf) : Prop :=
   cf.t > cf.s ∧ ws cf.c ∧ (∀ k ∈ tickets cf.c, k ≥ cf.s ∧ k < cf.t) ∧ ((tickets cf.c).Nodup)
@@ -89,3 +91,11 @@ def crit_pred (cf : Conf) : Prop :=
     ws ps ∧
     (∀ k ∈ tickets ps, k > cf.s ∧ k < cf.t) ∧
     ((tickets ps).Nodup)
+
+def inv_pred (cf : Conf) : Prop :=
+  init_pred cf ∨ wait_pred cf ∨ crit_pred cf
+
+--- DMC: Define the ISystem instance for Conf
+instance : IndInv Conf inv_pred where
+  base cf h0 := by sorry
+  ind cf cf' h := by sorry
