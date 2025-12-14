@@ -8,8 +8,9 @@ class System (σ : Type u) where
   step : σ → σ → Prop
 
 --- ISystem: System + init
-class ISystem (σ : Type u) [System σ] where
+class ISystem (σ : Type u) extends System σ where
   init : σ → Prop
+
 
 infix:110 " ⇒ " => System.step
 
@@ -20,8 +21,8 @@ abbrev steps {σ : Type u} [System σ] : σ → σ → Prop :=
 infix:110 " ⇒* " => steps
 
 
--- class IndInv {σ : Type u} [System σ] (P : σ → Prop) : Prop where
---   base : ∀ {c : σ}, P c → P c
+-- class IndInv {σ : Type u} [System σ] [ISystem σ] (P : σ → Prop) : Prop where
+--   base : ∀ {c : σ}, ISystem.init c → P c
 --   inv : ∀ {c c' : σ}, P c → (c ⇒ c') → P c'
 
 
