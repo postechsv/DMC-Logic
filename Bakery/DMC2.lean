@@ -11,32 +11,27 @@ class System (σ : Type u) where
 class ISystem (σ : Type u) extends System σ where
   init : σ → Prop
 
-
-infix:110 " ⇒ " => System.step
-
-/-- Reflexive-transitive closure of `⇒`. -/
 abbrev steps {σ : Type u} [System σ] : σ → σ → Prop :=
   Relation.ReflTransGen (System.step (σ := σ))
 
+infix:110 " ⇒ " => System.step
 infix:110 " ⇒* " => steps
 
+class IndInv (σ : Type u)
+  (inv : σ → Prop)
+  [S : ISystem σ] where
+    base : ∀ cf : σ, S.init cf → inv cf
+    ind : ∀ (cf cf' : σ), (inv cf ∧ (cf ⇒ cf')) → (inv cf')
 
--- class IndInv {σ : Type u} [System σ] [ISystem σ] (P : σ → Prop) : Prop where
---   base : ∀ {c : σ}, ISystem.init c → P c
---   inv : ∀ {c c' : σ}, P c → (c ⇒ c') → P c'
 
+--- Alternative definitions -- Bundled Approach (commented out) -/
+-- structure System (σ : Type u) where
+--   step : σ → σ → Prop
 
+-- structure ISystem (σ : Type u) extends System σ where
+--   init : σ → Prop
 
--- Convenience lemmas you’ll use everywhere:
-
-theorem steps_refl {σ} [System σ] (c : σ) : c ⇒* c :=
-  Relation.ReflTransGen.refl
-
-theorem steps_single {σ} [System σ] {c c' : σ} (h : c ⇒ c') : c ⇒* c' :=
-  Relation.ReflTransGen.single h
-
-theorem steps_trans {σ} [System σ] {a b c : σ} :
-    a ⇒* b → b ⇒* c → a ⇒* c :=
-  Relation.ReflTransGen.trans
-
----end System
+-- infix:110 " ⇒ " => System.step
+-- Cons of bundled approach: need S as parameter to steps
+-- def steps {σ} (S : System σ) : σ → σ → Prop := Relation.ReflTransGen S.step
+-- infix:110 " ⇒* " => steps
