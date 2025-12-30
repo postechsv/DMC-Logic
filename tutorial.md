@@ -63,3 +63,11 @@ def crit_pred (cf : Conf) : Prop :=
     (∀ k ∈ tickets ps, k > cf.s ∧ k < cf.t) ∧ 
     ((tickets ps).Nodup)
 ```
+
+### The Global Invariant
+The overall invariant Inv is the disjunction of these three possibilities.
+
+```lean
+def Inv (cf : Conf) : Prop :=
+  init_pred cf ∨ wait_pred cf ∨ crit_pred cf
+```
