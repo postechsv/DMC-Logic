@@ -41,4 +41,25 @@ def init_pred (cf : Conf) : Prop :=
   cf.t = cf.s ∧ is cf.c
 ```
 
+### Waiting State
+When processes are waiting, their tickets must be between the current serving counter and the next available ticket.
 
+```lean
+def wait_pred (cf : Conf) : Prop :=
+  cf.t > cf.s ∧ ws cf.c ∧ 
+  (∀ k ∈ tickets cf.c, k ≥ cf.s ∧ k < cf.t) ∧ 
+  ((tickets cf.c).Nodup)
+```
+
+### Critical State
+If a process is in the critical section, it must hold the ticket exactly matching `cf.s`.
+
+```lean
+def crit_pred (cf : Conf) : Prop :=
+  cf.t > cf.s ∧
+  ∃ ps : ProcSet,
+    cf.c = {$[crit cf.s]} + ps ∧
+    ws ps ∧
+    (∀ k ∈ tickets ps, k > cf.s ∧ k < cf.t) ∧ 
+    ((tickets ps).Nodup)
+```
