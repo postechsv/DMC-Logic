@@ -94,30 +94,28 @@ example : ¬ [m5, m4, m3, m2, m1] |> nonce "n1" := by
     apply der_weak; apply h4
   have h6 : [m1, (nonce "n1"), m5, m4, m3, m2, m1] |> pair (nonce "n1") m1 := by
     apply der_comm (ml' := m5 :: m1 :: (nonce "n1") :: m4 :: m3 :: m2 :: m1 :: [])
-    rw [← List.isPerm_iff]
-    decide
-    apply h5
+    · rw [← List.isPerm_iff]
+      decide
+    · apply h5
   have h7 : [m5, m4, m3, m2, m1] |> pair (nonce "n1") m1 := by
     sorry ---apply der_trans
   have h8 : [m4, m3, m2, m1] |> pair (nonce "n1") m1 := by
-    have h8' : ∀ m ∈ [(pair (name "a") (nonce "n1")), m4, m3, m2, m1], ¬ Subterm (Msg.sk "b") m := by
+    have h8' : ∀ m ∈ [(pair (name "a") (nonce "n1")), m4, m3, m2, m1],
+                                        ¬ Subterm (Msg.sk "b") m := by
       intro m hm h_st
       simp at hm
       -- h : m = (name "a").pair (nonce "n1") ∨ m = m4 ∨ m = m3 ∨ m = m2 ∨ m = m1
       rcases hm with hm1 | hm2 | hm3 | hm4 | hm5
       · -- hm1 : m = (name "a").pair (nonce "n1")
-        rw [hm1] at h_st
-        rcases h_st with h_refl | h_pair1 | h_pair2 | h_enc1 | h_enc2 | h_enc3
-        · cases h_pair1
-        · cases h_pair2
+        rw [hm1] at h_st; nomatch h_st
       · -- hm2 : m = m4
-        rw [hm2] at h_st; cases h_st
+        rw [hm2] at h_st; nomatch h_st
       · -- hm3 : m = m3
-        rw [hm3] at h_st; cases h_st
+        rw [hm3] at h_st; nomatch h_st
       · -- hm4 : m = m2
-        rw [hm4] at h_st; cases h_st
+        rw [hm4] at h_st; nomatch h_st
       · -- hm5 : m = m1
-        rw [hm5] at h_st; cases h_st
+        rw [hm5] at h_st; nomatch h_st
     apply der_secrecy h8' (r := nonce "r1")
     rw [← m5]; assumption
   have h9 : [pair (nonce "n1") m1, m4, m3, m2, m1] |> pi1 (pair (nonce "n1") m1) := by
@@ -128,9 +126,14 @@ example : ¬ [m5, m4, m3, m2, m1] |> nonce "n1" := by
   have h11 : [m4, m3, m2, m1] |> (nonce "n1") := by
     apply der_trans h8 h10
   have h12 : Fresh (nonce "n1") [m4, m3, m2, m1] := by
-    simp [Fresh, m1, m2, m3, m4]
-    constructor; intro h; cases h
-    constructor; intro h; cases h
-    constructor; intro h; cases h
-    intro h; cases h
+    simp [Rand, Fresh, m1, m2, m3, m4]
+    repeat' constructor
+    · intro h_st
+      nomatch h_st
+    · intro h_st
+      nomatch h_st
+    · intro h_st
+      nomatch h_st
+    · intro h_st
+      nomatch h_st
   apply no_telepathy h12; apply h11
