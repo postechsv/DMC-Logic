@@ -7,12 +7,12 @@ inductive Msg where
   | name  : String -> Msg
   | nonce : String -> Msg
   | enc   : Msg -> Msg -> Msg -> Msg
-  | dec   : Msg -> Msg -> Msg -- destructor term
+  --| dec   : Msg -> Msg -> Msg -- destructor term
   | pk    : String -> Msg
   | sk    : String -> Msg
   | pair  : Msg -> Msg -> Msg
-  | pi1   : Msg -> Msg -- destructor term
-  | pi2   : Msg -> Msg -- destructor term
+  --| pi1   : Msg -> Msg -- destructor term
+  --| pi2   : Msg -> Msg -- destructor term
   deriving DecidableEq
 
 abbrev MsgList := List Msg
@@ -26,12 +26,12 @@ def pi2 : Msg -> Msg
   | _ => Msg.err
 
 -- alternative for pi1 and pi2
-def eval : Msg -> Msg
-  | Msg.pi1 (Msg.pair m _) => m
-  | Msg.pi2 (Msg.pair _ m) => m
-  | Msg.dec (Msg.enc m _ (Msg.pk str)) (Msg.sk str') =>
-      if str = str' then m else Msg.err
-  | m => m
+-- def eval : Msg -> Msg
+--   | Msg.pi1 (Msg.pair m _) => m
+--   | Msg.pi2 (Msg.pair _ m) => m
+--   | Msg.dec (Msg.enc m _ (Msg.pk str)) (Msg.sk str') =>
+--       if str = str' then m else Msg.err
+--   | m => m
 
 inductive Subterm : Msg → Msg → Prop where
   | refl (m : Msg) : Subterm m m
@@ -61,7 +61,7 @@ axiom der_comm : ∀ {ml ml' m}, ml.Perm ml' → Derivable ml' m → Derivable m
 axiom der_trans : ∀ {ml m m'}, Derivable ml m' → Derivable (m' :: ml) m → Derivable ml m
 axiom der_cong_pair : ∀ {ml m1 m2}, Derivable (m2::m1::ml) (Msg.pair m1 m2)
 axiom der_cong_pi1 : ∀ {ml m}, Derivable ml m → Derivable ml (pi1 m)
-axiom der_secrecy : ∀ {ml m m' r str}, ∀ m'' ∈ m'::ml, ¬ Subterm (Msg.sk str) m''
+axiom der_secrecy : ∀ {ml m m' r str}, (∀ m'' ∈ m'::ml, ¬ Subterm (Msg.sk str) m'')
                     → Derivable (Msg.enc m' r (Msg.pk str)::ml) m → Derivable ml m
 axiom no_telepathy : ∀ {ml m}, Fresh m ml → ¬ Derivable ml m
 
@@ -100,21 +100,26 @@ example : ¬ [m5, m4, m3, m2, m1] |> nonce "n1" := by
   have h7 : [m5, m4, m3, m2, m1] |> pair (nonce "n1") m1 := by
     sorry ---apply der_trans
   have h8 : [m4, m3, m2, m1] |> pair (nonce "n1") m1 := by
-    have h8' : ∀ m ∈ [m5, m4, m3, m2, m1], ¬ Subterm (Msg.sk "b") m := by
-      intro m h h'
-
-
-    simp [m5] at h7
-    have h8' : ∀ m ∈ [pair (name "a") (nonce "n1"), m4, m3, m2, m1], ¬ Subterm (Msg.sk "b") m := by
-      intro m h h'
-      rcases h with hm5 | hm4 | hm3 | hm2 | hm1
-
-      cases h
-      nomatch h'
-      cases a
-      sorry
-
-    apply der_secrecy h7 --- FIXME
+    have h8' : ∀ m ∈ [(pair (name "a") (nonce "n1")), m4, m3, m2, m1], ¬ Subterm (Msg.sk "b") m := by
+      intro m hm h_st
+      simp at hm
+      -- h : m = (name "a").pair (nonce "n1") ∨ m = m4 ∨ m = m3 ∨ m = m2 ∨ m = m1
+      rcases hm with hm1 | hm2 | hm3 | hm4 | hm5
+      · -- hm1 : m = (name "a").pair (nonce "n1")
+        rw [hm1] at h_st
+        rcases h_st with h_refl | h_pair1 | h_pair2 | h_enc1 | h_enc2 | h_enc3
+        · cases h_pair1
+        · cases h_pair2
+      · -- hm2 : m = m4
+        rw [hm2] at h_st; cases h_st
+      · -- hm3 : m = m3
+        rw [hm3] at h_st; cases h_st
+      · -- hm4 : m = m2
+        rw [hm4] at h_st; cases h_st
+      · -- hm5 : m = m1
+        rw [hm5] at h_st; cases h_st
+    apply der_secrecy h8' (r := nonce "r1")
+    rw [← m5]; assumption
   have h9 : [pair (nonce "n1") m1, m4, m3, m2, m1] |> pi1 (pair (nonce "n1") m1) := by
     apply der_cong_pi1
     apply der_refl; simp
