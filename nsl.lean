@@ -83,3 +83,11 @@ inductive Step : Conf → Conf → Prop where
            { chan := ok i :: ml,
              ctrl := {session i cA BCtrl.b2} + ss,
              cond := p ∧ (ml |> x) ∧ dec x (sk iB) = nB i }
+
+infix:110 " ⇒ " => Step
+infix:110 " ⇒* " => Relation.ReflTransGen Step
+
+def init1 : Conf := { chan := [], ctrl := {session 0 ACtrl.a0 BCtrl.b0}, cond := True }
+
+example : init1 ⇒* init1 := by
+  apply Relation.ReflTransGen.refl
