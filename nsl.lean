@@ -257,26 +257,31 @@ lemma trace : conf0 ⇒* conf4 := by
   apply Relation.ReflTransGen.head step4
   apply Relation.ReflTransGen.refl
 
-
 --- attack in the "symbolic world"
+--- note that it is CONDITIONAL!
 lemma s_attack : fst (nB 0) = iQ → ∃ st, conf0 ⇒* st ∧ st.cond ∧ st.chan |> nB 0 := by
   intro h_vuln
   use conf4
   refine ⟨trace, ?_, ?_⟩
   · unfold conf4
     simp [m1,m2,m3]
+    --- TODO: just remove the nests
+    refine ⟨⟨⟨AttackerModel.att_none, ?_⟩, ?_⟩, ?_⟩ <;> { apply AttackerModel.att_mem; simp }
   · unfold conf4
     simp
     exact ⟨fun _ => nB 0, rfl⟩
 
+--- TODO : existential closure over attack trace to indicate satisfiability of cond
+--- lemma s_attack : fst (nB 0) = iQ → ∃ st ∃ xl, conf0 =(xl)=>* st ∧ st.cond ∧ st.chan |> nB 0 := by
+
+
+---
+--- MAIN THEOREM: computational lifting
+---
 
 --- computational assumption
-axiom nneq0 : fst (nB 0) = iQ --- should be justified "computationally"
+axiom nneq0 : ◇□ (fst (nB 0) = iQ) --- should be justified "computationally"
 
 --- lifting symbolic attack to computational attack (attack preservation)
-lemma c_attack : ◇□ ∃ st, conf0 ⇒* st ∧ st.cond ∧ st.chan |> nB 0 := by
-  have h_modal_axiom : ◇□ (fst (nB 0) = iQ) := by
-    have h_box := ax_N nneq0
-    intro h_contra
-    exact (ax_T h_contra) h_box
-  exact nnmp s_attack h_modal_axiom
+theorem c_attack : ◇□ ∃ st, conf0 ⇒* st ∧ st.cond ∧ st.chan |> nB 0 := by
+  exact nnmp s_attack nneq0
