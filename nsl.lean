@@ -39,6 +39,7 @@ lemma nnmp {p q : Prop} (h : p → q) (hp : ◇□p) : ◇□q := by
 
 --- syntax of NSL
 inductive Msg where
+  | err : Msg
   | none : Msg -- alternative: using option monads
   --- constants
   | iA : Msg
@@ -53,24 +54,64 @@ inductive Msg where
   | ok : Nat -> Msg
   --- assymetric encryption scheme
   | enc  : Msg -> Msg -> Msg -> Msg
-  | dec  : Msg -> Msg -> Msg
+  ---| dec  : Msg -> Msg -> Msg
   | pk   : Msg -> Msg
   | sk   : Msg -> Msg
   --- pairing
   | pair : Msg -> Msg -> Msg
-  | fst  : Msg -> Msg
-  | snd  : Msg -> Msg
+  ---| fst  : Msg -> Msg
+  ---| snd  : Msg -> Msg
   deriving DecidableEq
 open Msg
 
 --- equational axioms for pairing and encryption
-axiom fst_pair : ∀ m1 m2, fst (pair m1 m2) = m1
-axiom snd_pair : ∀ m1 m2, snd (pair m1 m2) = m2
-axiom dec_enc : ∀ m r id, dec (enc m r (pk id)) (sk id) = m
+---axiom fst_pair : ∀ m1 m2, fst (pair m1 m2) = m1
+---axiom snd_pair : ∀ m1 m2, snd (pair m1 m2) = m2
+---axiom dec_enc : ∀ m r id, dec (enc m r (pk id)) (sk id) = m
+-- Define the destructors as actual computable functions!
+@[simp]
+def fst : Msg → Msg
+  | pair m1 _ => m1
+  | _ => err
+
+@[simp]
+def snd : Msg → Msg
+  | pair _ m2 => m2
+  | _ => err
+
+@[simp]
+def dec : Msg → Msg → Msg
+  | enc m _ (pk id1), sk id2 =>
+      if id1 = id2 then m else err
+  | _, _ => err
+
+
+---
+--- attacker model (loose semantics)
+---
+class AttackerModel where
+  derivable : List Msg → Msg → Prop
+
+  -- Axioms refer directly to the internal `derivable` field
+  att_none : ∀ {ml}, derivable ml Msg.none
+  att_mem  : ∀ {ml m}, m ∈ ml → derivable ml m
+  att_pair : ∀ {ml m1 m2}, derivable ml m1 → derivable ml m2 → derivable ml (pair m1 m2)
+  att_fst  : ∀ {ml m1 m2}, derivable ml (pair m1 m2) → derivable ml m1
+  att_snd  : ∀ {ml m1 m2}, derivable ml (pair m1 m2) → derivable ml m2
+  att_enc  : ∀ {ml m r k}, derivable ml m → derivable ml r → derivable ml (pk k) → derivable ml (enc m r (pk k))
+  att_dec  : ∀ {ml m r k}, derivable ml (enc m r (pk k)) → derivable ml (sk k) → derivable ml m
+
+notation ml " |> " m => AttackerModel.derivable ml m
+
+--- typeclass resolution will automatically find the
+--- right instance of `AttackerModel` when we write `ml |> m`
+variable [AttackerModel]
+
 
 --- caveat: att is not restricted to be a PPTM
-def derivable (ml : List Msg) (m : Msg) : Prop := ∃ att : List Msg → Msg, att ml = m
-notation ml " |> " m => derivable ml m
+---def derivable (ml : List Msg) (m : Msg) : Prop := True
+---∃ att : List Msg → Msg, att ml = m
+---notation ml " |> " m => derivable ml m
 
 
 ---abbrev MsgList := List Msg
@@ -209,14 +250,28 @@ lemma step4 : conf3 ⇒ conf4 := by
     change _ ::ₘ _ ::ₘ 0 = _ ::ₘ _ ::ₘ 0
     rw [Multiset.cons_swap]
 
+lemma trace : conf0 ⇒* conf4 := by
+  apply Relation.ReflTransGen.head step1
+  apply Relation.ReflTransGen.head step2
+  apply Relation.ReflTransGen.head step3
+  apply Relation.ReflTransGen.head step4
+  apply Relation.ReflTransGen.refl
 
+
+--- attack in the "symbolic world"
+lemma s_attack : fst (nB 0) = iQ → ∃ st, conf0 ⇒* st ∧ st.cond ∧ st.chan |> nB 0 := by
+  intro h_vuln
+  use conf4
+  refine ⟨trace, ?_, ?_⟩
+  · unfold conf4
+    simp [m1,m2,m3]
+  · unfold conf4
+    simp
+    exact ⟨fun _ => nB 0, rfl⟩
 
 
 --- computational assumption
 axiom nneq0 : fst (nB 0) = iQ --- should be justified "computationally"
-
---- attack in the "symbolic world"
-lemma s_attack : fst (nB 0) = iQ → ∃ st, conf0 ⇒* st ∧ st.cond ∧ st.chan |> nB 0 := by sorry
 
 --- lifting symbolic attack to computational attack (attack preservation)
 lemma c_attack : ◇□ ∃ st, conf0 ⇒* st ∧ st.cond ∧ st.chan |> nB 0 := by
