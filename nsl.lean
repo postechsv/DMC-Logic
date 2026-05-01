@@ -108,12 +108,6 @@ notation ml " |> " m => AttackerModel.derivable ml m
 variable [AttackerModel]
 
 
---- caveat: att is not restricted to be a PPTM
----def derivable (ml : List Msg) (m : Msg) : Prop := True
----∃ att : List Msg → Msg, att ml = m
----notation ml " |> " m => derivable ml m
-
-
 ---abbrev MsgList := List Msg
 
 --- Initiator Role
@@ -259,7 +253,11 @@ lemma trace : conf0 ⇒* conf4 := by
 
 --- attack in the "symbolic world"
 --- note that it is CONDITIONAL!
-lemma s_attack : fst (nB 0) = iQ → ∃ st, conf0 ⇒* st ∧ st.cond ∧ st.chan |> nB 0 := by
+--- CRITICAL BUG!! !!!!!!!!!
+--- snd (nB 0) = iQ is false by inductiveness of Msg, so the attack is vacuously true.
+--- this means everything can be proved.
+--- so we need to distinguish equivalence from equality to avoid inconsistency w/ intensional TT
+lemma s_attack : snd (nB 0) = iQ → ∃ st, conf0 ⇒* st ∧ st.cond ∧ st.chan |> nB 0 := by
   intro h_vuln
   use conf4
   refine ⟨trace, ?_, ?_⟩
@@ -268,11 +266,10 @@ lemma s_attack : fst (nB 0) = iQ → ∃ st, conf0 ⇒* st ∧ st.cond ∧ st.ch
     --- TODO: just remove the nests
     refine ⟨⟨⟨AttackerModel.att_none, ?_⟩, ?_⟩, ?_⟩ <;> { apply AttackerModel.att_mem; simp }
   · unfold conf4
-    simp
-    exact ⟨fun _ => nB 0, rfl⟩
+    sorry
 
 --- TODO : existential closure over attack trace to indicate satisfiability of cond
---- lemma s_attack : fst (nB 0) = iQ → ∃ st ∃ xl, conf0 =(xl)=>* st ∧ st.cond ∧ st.chan |> nB 0 := by
+--- lemma s_attack : snd (nB 0) = iQ → ∃ st ∃ xl, conf0 =(xl)=>* st ∧ st.cond ∧ st.chan |> nB 0 := by
 
 
 ---
@@ -280,7 +277,7 @@ lemma s_attack : fst (nB 0) = iQ → ∃ st, conf0 ⇒* st ∧ st.cond ∧ st.ch
 ---
 
 --- computational assumption
-axiom nneq0 : ◇□ (fst (nB 0) = iQ) --- should be justified "computationally"
+axiom nneq0 : ◇□ (snd (nB 0) = iQ) --- should be justified "computationally"
 
 --- lifting symbolic attack to computational attack (attack preservation)
 theorem c_attack : ◇□ ∃ st, conf0 ⇒* st ∧ st.cond ∧ st.chan |> nB 0 := by
