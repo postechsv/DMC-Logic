@@ -178,5 +178,19 @@ lemma step3 : conf2 ⇒ conf3 := by
 
 
 --- TODO: rearrange cond right to left so it doesn't have to be nested explicitly
-def nn (P : Prop) : Prop := P
-lemma attack : fst (nB 0) = iQ → ∃ st, conf0 ⇒* st ∧ st.cond ∧ st.chan |> nB 0 := by sorry
+
+
+
+--- computational assumption
+axiom nneq0 : fst (nB 0) = iQ --- should be justified "computationally"
+
+--- attack in the "symbolic world"
+lemma s_attack : fst (nB 0) = iQ → ∃ st, conf0 ⇒* st ∧ st.cond ∧ st.chan |> nB 0 := by sorry
+
+--- lifting symbolic attack to computational attack (attack preservation)
+lemma c_attack : ◇□ ∃ st, conf0 ⇒* st ∧ st.cond ∧ st.chan |> nB 0 := by
+  have h_modal_axiom : ◇□ (fst (nB 0) = iQ) := by
+    have h_box := ax_N nneq0
+    intro h_contra
+    exact (ax_T h_contra) h_box
+  exact nnmp s_attack h_modal_axiom
