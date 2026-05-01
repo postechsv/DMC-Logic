@@ -1,7 +1,10 @@
 import Mathlib.Data.Multiset.Basic
 import Mathlib.Data.Multiset.AddSub
-
+import Mathlib.Algebra.Group.Basic
+---
 --- giving computational semantics of CCSA as S4
+---
+
 axiom Box : Prop → Prop
 prefix:75 "□" => Box
 prefix:75 "◇" => fun p => ¬□(¬p)
@@ -29,6 +32,12 @@ lemma nnmp {p q : Prop} (h : p → q) (hp : ◇□p) : ◇□q := by
   have h5 : □(¬□p) := h4 h_contra
   exact hp h5
 
+
+---
+--- defining NSL
+---
+
+--- syntax of NSL
 inductive Msg where
   | none : Msg -- alternative: using option monads
   --- constants
@@ -52,9 +61,9 @@ inductive Msg where
   | fst  : Msg -> Msg
   | snd  : Msg -> Msg
   deriving DecidableEq
-
 open Msg
 
+--- equational axioms for pairing and encryption
 axiom fst_pair : ∀ m1 m2, fst (pair m1 m2) = m1
 axiom snd_pair : ∀ m1 m2, snd (pair m1 m2) = m2
 axiom dec_enc : ∀ m r id, dec (enc m r (pk id)) (sk id) = m
@@ -87,12 +96,11 @@ open Session
 
 notation "$[" m "]" => Session.session m
 
-
---- global state with guard conditions
+--- global state
 structure Conf where
   chan : List Msg
   ctrl : Multiset Session --- caveat: can only have finite number of sessions
-  cond : Prop --- guard
+  cond : Prop --- guard condition
 
 --- transition relation
 inductive Step : Conf → Conf → Prop where
@@ -121,6 +129,11 @@ inductive Step : Conf → Conf → Prop where
 infix:110 " ⇒ " => Step
 infix:110 " ⇒* " => Relation.ReflTransGen Step
 
+
+---
+--- constructing the symbolic attack
+---
+
 def conf0 : Conf := { chan := [],
                       ctrl := {session 0 ACtrl.a0 BCtrl.b0, session 1 ACtrl.a0 BCtrl.b0},
                       cond := True }
@@ -141,7 +154,7 @@ def conf2 : Conf :=
   { chan := [m2, m1],
     ctrl := {session 0 ACtrl.a1 BCtrl.b1, session 1 ACtrl.a0 BCtrl.b0},
     cond := (True /\ ([] |> none)) /\ ([m1] |> m1) }
---- caution: careful on assoc of /\ : lean's unification doesn't handle /\'s associativity
+--- careful on assoc of /\ : lean's unification doesn't handle /\'s associativity
 --- (caught by gemini)
 
 --- output of a2
@@ -159,9 +172,10 @@ def m4 : Msg := (enc (pair (fst (dec m3 (sk iB))) (pair (nB 1) iB))
 
 def conf4 : Conf :=
   { chan := [m4, m3, m2, m1],
-    ctrl := {session 0 ACtrl.a2 BCtrl.b1, session 1 ACtrl.a0 BCtrl.b0},
-    cond := ((True /\ ([] |> none)) /\ ([m1] |> m1))
-         /\ ([m2, m1] |> m2) /\ fst (dec m2 (sk iA)) = nA 0 ∧ snd (snd (dec m2 (sk iA))) = iB }
+    ctrl := {session 0 ACtrl.a2 BCtrl.b1, session 1 ACtrl.a0 BCtrl.b1},
+    cond := (((True /\ ([] |> none)) /\ ([m1] |> m1))
+         /\ ([m2, m1] |> m2) /\ fst (dec m2 (sk iA)) = nA 0 ∧ snd (snd (dec m2 (sk iA))) = iB)
+         /\ ([m3, m2, m1] |> m3) }
 
 example : conf0 ⇒* conf0 := by
   apply Relation.ReflTransGen.refl
@@ -176,8 +190,25 @@ lemma step3 : conf2 ⇒ conf3 := by
   apply Step.a2 0 m2 [m2, m1] BCtrl.b1 {session 1 ACtrl.a0 BCtrl.b0}
                               ((True /\ ([] |> none)) /\ ([m1] |> m1))
 
+lemma step4 : conf3 ⇒ conf4 := by
+  convert Step.b1 1 m3 [m3, m2, m1] ACtrl.a0 {session 0 ACtrl.a2 BCtrl.b1}
+    (((True /\ ([] |> none)) /\ ([m1] |> m1)) /\ ([m2, m1] |> m2) /\ fst (dec m2 (sk iA)) = nA 0 ∧ snd (snd (dec m2 (sk iA))) = iB)
 
---- TODO: rearrange cond right to left so it doesn't have to be nested explicitly
+  -- Subgoal 1: conf3
+  · unfold conf3
+    -- Evaluate the .ctrl record projection
+    dsimp only
+    -- Force both sides to explicitly use the `::ₘ` syntax
+    change _ ::ₘ _ ::ₘ 0 = _ ::ₘ _ ::ₘ 0
+    -- Now the swap will work perfectly
+    rw [Multiset.cons_swap]
+
+  -- Subgoal 2: conf4
+  · unfold conf4
+    dsimp only
+    change _ ::ₘ _ ::ₘ 0 = _ ::ₘ _ ::ₘ 0
+    rw [Multiset.cons_swap]
+
 
 
 
