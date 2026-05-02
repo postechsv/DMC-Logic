@@ -1,9 +1,6 @@
 import Mathlib.Data.Multiset.Basic
 import Mathlib.Data.Multiset.AddSub
 import Mathlib.Algebra.Group.Basic
----
---- giving computational semantics of CCSA as S4
----
 
 axiom Box : Prop → Prop
 prefix:75 "□" => Box
@@ -17,22 +14,8 @@ axiom ax_N {a : Prop} : a → □a --- Necessitation
 axiom ax_T {p : Prop} : □p → p --- Factivity
 axiom ax_4 {p : Prop} : □p → □(□p) --- Positive Introspection
 
---- modus ponens for non-negligibility (only uses ax_K and ax_N)
-lemma nnmp_wrong {p q : Prop} (h : p → q) (hp : ◇□p) : ◇□q := by
-  -- hp is ¬□(¬□p), and our goal is ¬□(¬□q)
-  intro h_contra
-  -- 1. Necessitate the local implication and distribute with K
-  have h1 : □p → □q := ax_K (ax_N h)
-  -- 2. Take the contrapositive of the lifted implication
-  have h2 : ¬□q → ¬□p := fun hnq hp_inner => hnq (h1 hp_inner)
-  -- 3. Necessitate the contrapositive and distribute with K again
-  have h3 : □(¬□q → ¬□p) := ax_N h2
-  have h4 : □(¬□q) → □(¬□p) := ax_K h3
-  -- 4. Derive □(¬□p) using our contradictory assumption, which contradicts hp
-  have h5 : □(¬□p) := h4 h_contra
-  exact hp h5
 
-lemma nnmp_correct {p q : Prop} (h : □(p → q)) (hp : ◇□p) : ◇□q := by
+lemma nnmp {p q : Prop} (h : □(p → q)) (hp : ◇□p) : ◇□q := by
   -- hp is ¬□(¬□p), and our goal is ¬□(¬□q)
   intro h_contra
   -- Now we don't need to illegally necessitate a local variable.
@@ -66,22 +49,15 @@ inductive Msg where
   | r2 : Nat -> Msg
   | r3 : Nat -> Msg
   | ok : Nat -> Msg
-  --- assymetric encryption scheme
+  --- encryption
   | enc  : Msg -> Msg -> Msg -> Msg
-  ---| dec  : Msg -> Msg -> Msg
   | pk   : Msg -> Msg
   | sk   : Msg -> Msg
   --- pairing
   | pair : Msg -> Msg -> Msg
-  ---| fst  : Msg -> Msg
-  ---| snd  : Msg -> Msg
   deriving DecidableEq
 open Msg
 
---- equational axioms for pairing and encryption
----axiom fst_pair : ∀ m1 m2, fst (pair m1 m2) = m1
----axiom snd_pair : ∀ m1 m2, snd (pair m1 m2) = m2
----axiom dec_enc : ∀ m r id, dec (enc m r (pk id)) (sk id) = m
 -- Destructors
 ---@[simp]
 def fst : Msg → Msg
@@ -194,32 +170,48 @@ structure Conf where
   cond : Prop --- guard condition
 
 --- transition relation
-inductive Step : Conf → Conf → Prop where
-  | a1 (i : Nat) (x : Msg) : ∀ ml : List Msg, ∀ cB : BCtrl, ∀ ss : Multiset Session, ∀ p : Prop,
-      Step { chan := ml, ctrl := {session i ACtrl.a0 cB} + ss, cond := p }
-           { chan := (enc (pair (nA i) iA) (r1 i) (pk iB)) :: ml,
-             ctrl := {session i ACtrl.a1 cB} + ss,
-             cond := p ∧ (ml |> x) }
-  | a2 (i : Nat) (x : Msg) : ∀ ml : List Msg, ∀ cB : BCtrl, ∀ ss : Multiset Session, ∀ p : Prop,
-      Step { chan := ml, ctrl := {session i ACtrl.a1 cB} + ss, cond := p }
-           { chan := (enc (fst (snd (dec x (sk iA)))) (r3 i) (pk iB)) :: ml,
-             ctrl := {session i ACtrl.a2 cB} + ss,
-             cond := p ∧ (ml |> x) ∧ fst (dec x (sk iA)) ≈ nA i ∧ snd (snd (dec x (sk iA))) ≈ iB }
-  | b1 (i : Nat) (x : Msg) : ∀ ml : List Msg, ∀ cA : ACtrl, ∀ ss : Multiset Session, ∀ p : Prop,
-      Step { chan := ml, ctrl := {session i cA BCtrl.b0} + ss, cond := p }
-           { chan := (enc (pair (fst (dec x (sk iB))) (pair (nB i) iB))
-                          (r2 i) (pk (snd (dec x (sk iB))))) :: ml,
-             ctrl := {session i cA BCtrl.b1} + ss,
-             cond := p ∧ (ml |> x) }
-  | b2 (i : Nat) (x : Msg) : ∀ ml : List Msg, ∀ cA : ACtrl, ∀ ss : Multiset Session, ∀ p : Prop,
-      Step { chan := ml, ctrl := {session i cA BCtrl.b1} + ss, cond := p }
-           { chan := ok i :: ml,
-             ctrl := {session i cA BCtrl.b2} + ss,
-             cond := p ∧ (ml |> x) ∧ dec x (sk iB) ≈ nB i }
+inductive Step (x : Msg) : Conf → Conf → Prop where
+  | a1 (i : Nat)  : ∀ ml : List Msg, ∀ cB : BCtrl, ∀ ss : Multiset Session, ∀ p : Prop,
+      Step x
+        { chan := ml, ctrl := {session i ACtrl.a0 cB} + ss, cond := p }
+        { chan := (enc (pair (nA i) iA) (r1 i) (pk iB)) :: ml,
+          ctrl := {session i ACtrl.a1 cB} + ss,
+          cond := p ∧ (ml |> x) }
+  | a2 (i : Nat) : ∀ ml : List Msg, ∀ cB : BCtrl, ∀ ss : Multiset Session, ∀ p : Prop,
+      Step x
+        { chan := ml, ctrl := {session i ACtrl.a1 cB} + ss, cond := p }
+        { chan := (enc (fst (snd (dec x (sk iA)))) (r3 i) (pk iB)) :: ml,
+          ctrl := {session i ACtrl.a2 cB} + ss,
+          cond := p ∧ (ml |> x) ∧ fst (dec x (sk iA)) ≈ nA i ∧ snd (snd (dec x (sk iA))) ≈ iB }
+  | b1 (i : Nat) : ∀ ml : List Msg, ∀ cA : ACtrl, ∀ ss : Multiset Session, ∀ p : Prop,
+      Step x
+        { chan := ml, ctrl := {session i cA BCtrl.b0} + ss, cond := p }
+        { chan := (enc (pair (fst (dec x (sk iB))) (pair (nB i) iB))
+                      (r2 i) (pk (snd (dec x (sk iB))))) :: ml,
+          ctrl := {session i cA BCtrl.b1} + ss,
+          cond := p ∧ (ml |> x) }
+  | b2 (i : Nat) : ∀ ml : List Msg, ∀ cA : ACtrl, ∀ ss : Multiset Session, ∀ p : Prop,
+      Step x
+        { chan := ml, ctrl := {session i cA BCtrl.b1} + ss, cond := p }
+        { chan := ok i :: ml,
+          ctrl := {session i cA BCtrl.b2} + ss,
+          cond := p ∧ (ml |> x) ∧ dec x (sk iB) ≈ nB i }
 
-infix:110 " ⇒ " => Step
-infix:110 " ⇒* " => Relation.ReflTransGen Step
+notation:110 st1 " ~(" x ")~> " st2 => Step x st1 st2
 
+-- Labeled Reflexive-Transitive Closure
+inductive Trace : List Msg → Conf → Conf → Prop where
+  | refl (st : Conf) : Trace [] st st
+  | step {st1 st2 : Conf} {x : Msg} :
+      Step x st1 st2 →
+      Trace [x] st1 st2
+  | trans {st1 st2 st3 : Conf} {xl1 xl2 : List Msg} :
+      Trace xl1 st1 st2 →
+      Trace xl2 st2 st3 →
+      Trace (xl1 ++ xl2) st1 st3
+
+-- Notation: Multi-step transition from st1 to st2, labeled with sequence xl
+notation:110 st1 " ~(" xl ")~>* " st2 => Trace xl st1 st2
 
 ---
 --- constructing the symbolic attack
@@ -268,21 +260,23 @@ def conf4 : Conf :=
          /\ ([m2, m1] |> m2) /\ fst (dec m2 (sk iA)) ≈ nA 0 ∧ snd (snd (dec m2 (sk iA))) ≈ iB)
          /\ ([m3, m2, m1] |> m3) }
 
-example : conf0 ⇒* conf0 := by
-  apply Relation.ReflTransGen.refl
+example : conf0 ~([])~>* conf0 := by
+  apply Trace.refl
 
-lemma step1 : conf0 ⇒ conf1 := by
-  apply Step.a1 0 none [] BCtrl.b0 {session 1 ACtrl.a0 BCtrl.b0} True
+lemma step1 : conf0 ~(Msg.none)~> conf1 := by
+  apply Step.a1 0 [] BCtrl.b0 {session 1 ACtrl.a0 BCtrl.b0} True
 
-lemma step2 : conf1 ⇒ conf2 := by
-  apply Step.b1 0 m1 [m1] ACtrl.a1 {session 1 ACtrl.a0 BCtrl.b0} (True /\ ([] |> none))
+lemma step2 : conf1 ~(m1)~> conf2 := by
+  apply Step.b1 0 [m1] ACtrl.a1 {session 1 ACtrl.a0 BCtrl.b0} (True /\ ([] |> none))
 
-lemma step3 : conf2 ⇒ conf3 := by
-  apply Step.a2 0 m2 [m2, m1] BCtrl.b1 {session 1 ACtrl.a0 BCtrl.b0}
+lemma step3 : conf2 ~(m2)~> conf3 := by
+  apply Step.a2 0 [m2, m1] BCtrl.b1 {session 1 ACtrl.a0 BCtrl.b0} _
+  use m2
+  apply Step.a2 0 [m2, m1] BCtrl.b1 {session 1 ACtrl.a0 BCtrl.b0}
                               ((True /\ ([] |> none)) /\ ([m1] |> m1))
 
-lemma step4 : conf3 ⇒ conf4 := by
-  convert Step.b1 1 m3 [m3, m2, m1] ACtrl.a0 {session 0 ACtrl.a2 BCtrl.b1}
+lemma step4 : conf3 ~(m3)~> conf4 := by
+  convert Step.b1 1 [m3, m2, m1] ACtrl.a0 {session 0 ACtrl.a2 BCtrl.b1}
     (((True /\ ([] |> none)) /\ ([m1] |> m1)) /\ ([m2, m1] |> m2) /\ fst (dec m2 (sk iA)) ≈ nA 0 ∧ snd (snd (dec m2 (sk iA))) ≈ iB)
 
   -- Subgoal 1: conf3
@@ -300,23 +294,22 @@ lemma step4 : conf3 ⇒ conf4 := by
     change _ ::ₘ _ ::ₘ 0 = _ ::ₘ _ ::ₘ 0
     rw [Multiset.cons_swap]
 
-lemma trace : conf0 ⇒* conf4 := by
-  apply Relation.ReflTransGen.head step1
-  apply Relation.ReflTransGen.head step2
-  apply Relation.ReflTransGen.head step3
-  apply Relation.ReflTransGen.head step4
-  apply Relation.ReflTransGen.refl
+lemma trace : ∃ ml, conf0 ~(ml)~>* conf4 := by
+  use [Msg.none, m1, m2, m3]
+  have t1 : Trace [Msg.none] conf0 conf1 := Trace.step step1
+  have t2 : Trace [m1] conf1 conf2 := Trace.step step2
+  have t3 : Trace [m2] conf2 conf3 := Trace.step step3
+  have t4 : Trace [m3] conf3 conf4 := Trace.step step4
+  have t12 := Trace.trans t1 t2
+  have t34 := Trace.trans t3 t4
+  exact Trace.trans t12 t34
 
---- attack in the "symbolic world"
---- note that it is CONDITIONAL!
---- CRITICAL BUG!! !!!!!!!!!
---- snd (nB 0) = iQ is false by inductiveness of Msg, so the attack is vacuously true.
---- this means everything can be proved.
---- so we need to distinguish equivalence from equality to avoid inconsistency w/ intensional TT
-lemma s_attack : snd (nB 0) ≈ iQ → ∃ st, conf0 ⇒* st ∧ st.cond ∧ st.chan |> nB 0 := by
+lemma s_attack : snd (nB 0) ≈ iQ → ∃ st ml, (conf0 ~(ml)~>* st) ∧ st.cond ∧ st.chan |> nB 0 := by
   intro h_vuln
+  obtain ⟨ml, h_trace⟩ := trace
   use conf4
-  refine ⟨trace, ?_, ?_⟩
+  use ml
+  refine ⟨h_trace, ?_, ?_⟩
   · unfold conf4
     simp [m1,m2,m3]
     --- TODO: just remove the nests
@@ -360,17 +353,13 @@ lemma s_attack : snd (nB 0) ≈ iQ → ∃ st, conf0 ⇒* st ∧ st.cond ∧ st.
     · -- Resolves `pair (fst (nB 0)) (snd (nB 0)) ≈ nB 0`
       apply CompEquiv.surj_pair
 
---- TODO : existential closure over attack trace to indicate satisfiability of cond
---- lemma s_attack : snd (nB 0) = iQ → ∃ st ∃ xl, conf0 =(xl)=>* st ∧ st.cond ∧ st.chan |> nB 0 := by
-
-
 ---
 --- MAIN THEOREM: computational lifting
 ---
 
 --- computational assumption
-axiom nneq0 : ◇□ (snd (nB 0) ≈ iQ) --- should be justified "computationally"
+axiom ambiguity : ◇□ (snd (nB 0) ≈ iQ) --- should be justified "computationally"
 
 --- lifting symbolic attack to computational attack (attack preservation)
-theorem c_attack : ◇□ ∃ st, conf0 ⇒* st ∧ st.cond ∧ st.chan |> nB 0 := by
-  exact nnmp_correct (ax_N s_attack) nneq0
+theorem c_attack : ◇□ ∃ st ml, (conf0 ~(ml)~>* st) ∧ st.cond ∧ st.chan |> nB 0 := by
+  exact nnmp (ax_N s_attack) ambiguity
