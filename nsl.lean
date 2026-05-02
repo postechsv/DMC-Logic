@@ -271,9 +271,6 @@ lemma step2 : conf1 ~(m1)~> conf2 := by
 
 lemma step3 : conf2 ~(m2)~> conf3 := by
   apply Step.a2 0 [m2, m1] BCtrl.b1 {session 1 ACtrl.a0 BCtrl.b0} _
-  use m2
-  apply Step.a2 0 [m2, m1] BCtrl.b1 {session 1 ACtrl.a0 BCtrl.b0}
-                              ((True /\ ([] |> none)) /\ ([m1] |> m1))
 
 lemma step4 : conf3 ~(m3)~> conf4 := by
   convert Step.b1 1 [m3, m2, m1] ACtrl.a0 {session 0 ACtrl.a2 BCtrl.b1}
