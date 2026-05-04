@@ -21,6 +21,18 @@ def diamond {K : KripkeFrame} (P : MProp K) : MProp K :=
 notation:max "□" P:max => box P
 notation:max "⋄" P:max => diamond P
 
+-- Modal True: A function that returns standard True in every world
+def mtrue {K : KripkeFrame} : MProp K :=
+  fun _ => True
+
+-- Modal False: A function that returns standard False in every world
+def mfalse {K : KripkeFrame} : MProp K :=
+  fun _ => False
+
+-- Standard notation for Top (True) and Bottom (False)
+-- notation " ⊤ " => mtrue
+-- notation " ⊥ " => mfalse
+
 -- M, S ⊨ ϕ ∧ ψ  iff  M, S ⊨ ϕ  and  M, S ⊨ ψ
 def mand {K : KripkeFrame} (ϕ ψ : MProp K) : MProp K :=
   fun w => ϕ w ∧ ψ w
@@ -44,8 +56,8 @@ def mexists {K : KripkeFrame} {D : Type} (ϕ : D → MProp K) : MProp K :=
 def mimpl {K : KripkeFrame} (ϕ ψ : MProp K) : MProp K :=
   fun w => ϕ w → ψ w
 
-infix:35 " ⋏ " => mand
-infix:30 " ⋎ " => mor
+infixr:35 " ⋏ " => mand
+infixr:30 " ⋎ " => mor
 prefix:max "∼" => mnot
 infixr:70 " ⊃ " => mimpl
 
