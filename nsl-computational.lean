@@ -281,7 +281,7 @@ lemma trace : ∃ ml, (conf0 : Conf K) ~(ml)~>* conf4 := by
         Trace.trans (Trace.step step3) <|
                     (Trace.step step4)
 
-
+/-
 lemma s_attack : snd (nB 0) ≈ iQ → ∃ st ml, (conf0 ~(ml)~>* st) ∧ st.cond ∧ st.chan |> nB 0 := by
   intro h_vuln
   obtain ⟨ml, h_trace⟩ := trace
@@ -330,15 +330,117 @@ lemma s_attack : snd (nB 0) ≈ iQ → ∃ st ml, (conf0 ~(ml)~>* st) ∧ st.con
       exact h_vuln
     · -- Resolves `pair (fst (nB 0)) (snd (nB 0)) ≈ nB 0`
       apply CompEquiv.surj_pair
-
+-/
 ---
 --- MAIN THEOREM: computational lifting
+
+
+/-
+- Γ : conjuction of atomic propositions (of form ml |> m or m1 ≈ m2)
+- Reach(ml, Γ) : my system can reach a state, where
+  - Γ is the path condition, and
+  - ml is the sequence of output messages (frame)
+  - Reach(ml, Γ) may be regarded as atomic predicate,
+    as it does not depend on possible worlds (really?)
+- n : secret nonce
+- φ* : The Fitting twist of φ in S4, where φ is FOL formula
+
+Then my secrecy claim would be written in FOL as:
+  secrecy : ∀ ml, Γ, (Reach(ml, Γ) ∧ Γ) → ¬(ml |> n)
+
+Then, Fitting twists gives:
+  secrecy* : ∀ ml, Γ, □((□⋄Reach(ml, Γ) ∧ Γ*) → □¬□⋄(ml |> n))
+which is equivalent to:
+  secrecy* : ∀ ml, Γ, □((Reach(ml, Γ) ∧ Γ*) → □¬□⋄(ml |> n))
+
+
+-/
+
+
+
+
+
 ---
+notation:20 w " ⊨ₛ₄ " p => p w
 
---- computational assumption
-axiom ambiguity : ∃ (w : K.World), (snd (nB 0) ≈ iQ) w --- should be justified "computationally"
+--- computational assumption. should be justified "computationally"
+--- i.e.: ∃ (w : K.World), ∀ (w' : K.World), K.R w w' ∧ (snd (nB 0) ≈ iQ) w'
+axiom ambiguity : K.root ⊨ₛ₄ ⋄□(snd (nB 0) ≈ iQ)
 
---- lifting symbolic attack to computational attack (attack preservation)
-theorem c_attack :
-  ∃ (w : K.World), ∃ st ml, (conf0 ~(ml)~>* st) ∧ st.cond w ∧ (st.chan |> nB 0) w := by
-  sorry
+--- computational secrecy
+--- Mᶜ ⊨ₛ₄ ϕ
+--- iff Mᶜ, Ω ⊨ₛ₄ ϕ   (... by def. in the paper)
+--- iff Mᶜ, S ⊨ₛ₄ ϕ for any S ⊆ Ω   (... need to show this)
+
+--- computational attack is the negation
+--- Mᶜ, S ⊨ₛ₄ ϕ for some S ⊆ Ω
+
+--- computational attack follows from symbolic attack
+--- (need to show this by initiality of the symbolic model)
+--- A, S ⊨ₛ₄ ϕ for some S ⊆ Ω
+
+axiom equiv_refl' : ∀ m, K.root ⊨ₛ₄ □⋄(m ≈ m)
+axiom att_none' : ∀ {ml}, K.root ⊨ₛ₄ □⋄(ml |> none)
+axiom att_mem' : ∀ {ml m}, m ∈ ml → (K.root ⊨ₛ₄ □⋄(ml |> m))
+
+def leak :=
+  ∃ st ml,
+    (conf0 ~(ml)~>* st) ∧
+    ∃ (w : K.World), (w ⊨ₛ₄ st.cond ⋏ □⋄(st.chan |> nB 0))
+
+
+--- w r w' ∧ w ⊨ₛ₄ □⋄p → w ⊨ₛ₄ □⋄p
+lemma persist_ow {K : KripkeFrame} {P : K.World → Prop} {w w' : K.World}
+    (h_R : K.R w w') (h_boxdia : □⋄P w) : □⋄P w' := by
+  intro v h_w'_v
+  have h_w_v : K.R w v := K.trans h_R h_w'_v
+  exact h_boxdia v h_w_v
+
+theorem attack : @leak K _ := by
+  unfold leak
+  obtain ⟨ml, h_trace⟩ := @trace K _
+  obtain ⟨w, ⟨root_R_w, h_w⟩⟩ := @ambiguity K _
+  use conf4; use ml; refine ⟨h_trace, ?_⟩
+  use w -- the non-negligible world where ambiguity holds
+  unfold conf4; simp [mand]
+  refine ⟨⟨?_, ?_, ?_, ?_, ?_, ?_, ?_⟩,?_⟩
+  --- (click here to see all 8 proof obligations)
+  · have h_mem : m3 ∈ [m3,m2,m1] := by simp
+    apply persist_ow root_R_w (att_mem' h_mem)
+  · have h_mem : m2 ∈ [m2,m1] := by simp
+    apply persist_ow root_R_w (att_mem' h_mem)
+  · simp [m1,m2] -- □⋄(nA 0 ≈ nA 0) w
+    apply persist_ow root_R_w (equiv_refl' _)
+  · simp [m1,m2] -- □⋄(iB ≈ iB) w
+    apply persist_ow root_R_w (equiv_refl' _)
+  · have h_mem : m1 ∈ [m1] := by simp
+    apply persist_ow root_R_w (att_mem' h_mem)
+  · apply persist_ow root_R_w att_none'
+  · simp [mtrue]
+  · -- rewrite nB 0 = <nQ, iQ> using axiom
+    -- simp
+    sorry
+
+
+
+
+
+
+
+
+
+-- Assuming `mtrue` evaluates to `True` at world w
+lemma persist_mtrue {K : KripkeFrame} {w w' : K.World}
+    (h_R : K.R w w') (h_t : mtrue w) : mtrue w' := by
+  exact h_t -- or `trivial`, depending on your exact definition
+
+-- Assuming `(P ⋏ Q) w` evaluates to `P w ∧ Q w`
+lemma persist_mand {K : KripkeFrame} {P Q : K.World → Prop} {w w' : K.World}
+    (h_R : K.R w w')
+    (hp : ∀ {v v'}, K.R v v' → P v → P v') -- P is persistent
+    (hq : ∀ {v v'}, K.R v v' → Q v → Q v') -- Q is persistent
+    (h_pq : (P ⋏ Q) w) : (P ⋏ Q) w' := by
+  -- Unfold the modal conjunction
+  rcases h_pq with ⟨h_P_w, h_Q_w⟩
+  -- Apply persistence to both sides
+  exact ⟨hp h_R h_P_w, hq h_R h_Q_w⟩
