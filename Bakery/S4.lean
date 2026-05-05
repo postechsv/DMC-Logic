@@ -4,11 +4,14 @@ import Mathlib.Logic.Relation
 --- standard "computational" model of CCSA (a la Bana & Comon)
 --- where world  =  non-negligible set of random tapes
 ---   and w R v <=> w superset of v
+--- TODO: should be called RootedKripkeFrame
 structure KripkeFrame where
   World : Type
   R : World → World → Prop
   refl : Reflexive R
   trans : Transitive R
+  root : World
+  min : ∀ w, R root w
 
 def MProp (K : KripkeFrame) := K.World → Prop
 
