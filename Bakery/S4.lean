@@ -59,10 +59,21 @@ def mexists {K : KripkeFrame} {D : Type} (ϕ : D → MProp K) : MProp K :=
 def mimpl {K : KripkeFrame} (ϕ ψ : MProp K) : MProp K :=
   fun w => ϕ w → ψ w
 
+-- Modal Implication
+def mimp {K : KripkeFrame} (p q : MProp K) : MProp K :=
+  fun w => p w → q w
+
+-- Modal Biconditional (Iff)
+def miff {K : KripkeFrame} (p q : MProp K) : MProp K :=
+  fun w => p w ↔ q w
+
 infixr:35 " ⋏ " => mand
 infixr:30 " ⋎ " => mor
 prefix:max "∼" => mnot
 infixr:70 " ⊃ " => mimpl
+notation:20 w " ⊨ₛ₄ " p => p w
+notation:50 p " ⤇ " q => mimp p q
+notation:50 p " ⇔ " q => miff p q
 
 
 -- K (Distribution)
@@ -91,3 +102,19 @@ lemma necessitation {F : KripkeFrame} (P : MProp F) :
   -- Since P is true in EVERY world (`hValid`), it is trivially true in `v`.
   -- We don't even need to look at the accessibility relation!
   exact hValid v
+
+
+--- w r w' ∧ w ⊨ₛ₄ □⋄p → w ⊨ₛ₄ □⋄p
+lemma persist_ow {K : KripkeFrame} {P : K.World → Prop} {w w' : K.World}
+    (h_R : K.R w w') (h_boxdia : □⋄P w) : □⋄P w' := by
+  intro v h_w'_v
+  have h_w_v : K.R w v := K.trans h_R h_w'_v
+  exact h_boxdia v h_w_v
+
+lemma box_imp_box_dia {K : KripkeFrame} {P : K.World → Prop} {w : K.World}
+    (h_box : □ P w) : □⋄ P w := by
+  intro w' h_w_w'
+  use w'
+  constructor
+  · exact K.refl w'
+  · exact h_box w' h_w_w'

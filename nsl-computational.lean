@@ -18,7 +18,7 @@ inductive Msg where
   | iQ : Msg --- for guessing attack
   | nA : Nat -> Msg --- parameterized by session id
   | nB : Nat -> Msg
-  | nQ : Nat -> Msg --- for guessing attack
+  | nQ : Msg --- for guessing attack
   | r1 : Nat -> Msg
   | r2 : Nat -> Msg
   | r3 : Nat -> Msg
@@ -68,9 +68,7 @@ class CompEquiv (K : KripkeFrame) where
   symm  : ∀ w m1 m2, equiv m1 m2 w → equiv m2 m1 w
   trans : ∀ w m1 m2 m3, equiv m1 m2 w → equiv m2 m3 w → equiv m1 m3 w
 
-  --surj_pair : ∀ {m}, equiv (pair (fst m) (snd m)) m
-  --pair_cong_snd : ∀ {m1 m2 m3}, equiv m2 m3 → equiv (pair m1 m2) (pair m1 m3)
-  --enc_cong_pk   : ∀ {m r k1 k2}, equiv k1 k2 → equiv (enc m r (pk k1)) (enc m r (pk k2))
+
 
 notation:50 m1 " ≈ " m2 => CompEquiv.equiv m1 m2
 
@@ -85,36 +83,7 @@ variable [CompEquiv K]
 
 
 
----
---- attacker model (loose semantics)
----
-class AttackerModel where
-  derivable : List Msg → Msg → Prop
 
-  -- Axioms refer directly to the internal `derivable` field
-  att_none : ∀ {ml}, derivable ml Msg.none
-  att_mem  : ∀ {ml m}, m ∈ ml → derivable ml m
-  att_pair : ∀ {ml m1 m2}, derivable ml m1 → derivable ml m2 → derivable ml (pair m1 m2)
-  att_fst  : ∀ {ml m1 m2}, derivable ml (pair m1 m2) → derivable ml m1
-  att_snd  : ∀ {ml m1 m2}, derivable ml (pair m1 m2) → derivable ml m2
-  att_enc  : ∀ {ml m r k}, derivable ml m → derivable ml r → derivable ml (pk k) → derivable ml (enc m r (pk k))
-  att_dec  : ∀ {ml m r k}, derivable ml (enc m r (pk k)) → derivable ml (sk k) → derivable ml m
-
-  -- NEW: Attacker knows their own identity and key
-  att_iQ   : ∀ {ml}, derivable ml iQ
-  att_skQ  : ∀ {ml}, derivable ml (sk iQ)
-
-  -- NEW: The Bridge Rule (If you can derive m1, and m1 ≈ m2, you can derive m2)
-  ---att_equiv : ∀ {ml m1 m2}, derivable ml m1 → m1 ≈ m2 → derivable ml m2
-
----notation ml " |> " m => AttackerModel.derivable ml m
-
---- typeclass resolution will automatically find the
---- right instance of `AttackerModel` when we write `ml |> m`
----variable [AttackerModel]
-
-
----abbrev MsgList := List Msg
 
 --- Initiator Role
 inductive ACtrl
@@ -256,23 +225,7 @@ def conf4 : Conf K :=
 --- TODO: difficulty in unification with + for multisets
 lemma step4 : (conf3 : Conf K) ~(m3)~> conf4 := by
   sorry
-  -- convert Step.b1 1 [m3, m2, m1] ACtrl.a0 {session 0 ACtrl.a2 BCtrl.b1}
-  --   (□⋄([m3, m2, m1] |> m3) ⋏ □⋄([m2, m1] |> m2) ⋏ □⋄(fst (dec m2 (sk iA)) ≈ nA 0) ⋏ □⋄(snd (snd (dec m2 (sk iA))) ≈ iB)
-  --   ⋏ □⋄([m1] |> m1) ⋏ □⋄([] |> none) ⋏ mtrue)
-  -- -- Subgoal 1: conf3
-  -- · unfold conf3
-  --   -- Evaluate the .ctrl record projection
-  --   dsimp only
-  --   -- Force both sides to explicitly use the `::ₘ` syntax
-  --   change _ ::ₘ _ ::ₘ 0 = _ ::ₘ _ ::ₘ 0
-  --   -- Now the swap will work perfectly
-  --   rw [Multiset.cons_swap]
 
-  -- -- Subgoal 2: conf4
-  -- · ---unfold conf4
-  --   dsimp only
-  --   change _ ::ₘ _ ::ₘ 0 = _ ::ₘ _ ::ₘ 0
-  --   rw [Multiset.cons_swap]
 
 lemma trace : ∃ ml, (conf0 : Conf K) ~(ml)~>* conf4 := by
   use [Msg.none, m1, m2, m3]
@@ -281,91 +234,16 @@ lemma trace : ∃ ml, (conf0 : Conf K) ~(ml)~>* conf4 := by
         Trace.trans (Trace.step step3) <|
                     (Trace.step step4)
 
-/-
-lemma s_attack : snd (nB 0) ≈ iQ → ∃ st ml, (conf0 ~(ml)~>* st) ∧ st.cond ∧ st.chan |> nB 0 := by
-  intro h_vuln
-  obtain ⟨ml, h_trace⟩ := trace
-  use conf4
-  use ml
-  refine ⟨h_trace, ?_, ?_⟩
-  · unfold conf4
-    simp [m1,m2,m3]
-    --- TODO: just remove the nests
-    refine ⟨⟨⟨AttackerModel.att_none, ?_⟩, ?_⟩, ?_⟩ <;> { apply AttackerModel.att_mem; simp }
-  · -- The Attacker Derivation Phase
-    unfold conf4
-    -- Use `simp only` to evaluate the cryptography without reducing `fst (nB 0)` to `err`
-    simp only [m1, m2, m3, m4, fst_pair_reduce, snd_pair_reduce, dec_enc_reduce]
-
-    -- Step 1: Isolate m4 and swap its public key from pk(snd(nB 0)) to pk(iQ)
-    have h_m4_eq : enc (pair (fst (nB 0)) (pair (nB 1) iB)) (r2 1) (pk (snd (nB 0))) ≈
-                   enc (pair (fst (nB 0)) (pair (nB 1) iB)) (r2 1) (pk iQ) := by
-      apply CompEquiv.enc_cong_pk
-      exact h_vuln
-
-    have h_derive_m4_iQ : [m4, m3, m2, m1] |> enc (pair (fst (nB 0)) (pair (nB 1) iB)) (r2 1) (pk iQ) := by
-      apply AttackerModel.att_equiv (m1 := enc (pair (fst (nB 0)) (pair (nB 1) iB)) (r2 1) (pk (snd (nB 0))))
-      · apply AttackerModel.att_mem
-        -- Now there are no metavariables! simp will unfold m4, match it perfectly, and solve the goal.
-        simp [m4, m3, m2, m1, fst_pair_reduce, snd_pair_reduce, dec_enc_reduce]
-      · exact h_m4_eq
-
-    -- Step 2: Decrypt it with the attacker's secret key to get the inner pair
-    have h_inner : [m4, m3, m2, m1] |> pair (fst (nB 0)) (pair (nB 1) iB) :=
-      AttackerModel.att_dec h_derive_m4_iQ AttackerModel.att_skQ
-
-    -- Step 3: Extract the first half and pair it with the attacker's identity
-    have h_fst : [m4, m3, m2, m1] |> fst (nB 0) := AttackerModel.att_fst h_inner
-    have h_repaired : [m4, m3, m2, m1] |> pair (fst (nB 0)) iQ :=
-      AttackerModel.att_pair h_fst AttackerModel.att_iQ
-
-    -- Step 4: Prove that the repaired pair is equivalent to the target nonce (nB 0)
-    apply AttackerModel.att_equiv h_repaired
-
-    -- Goal: pair (fst (nB 0)) iQ ≈ nB 0
-    apply CompEquiv.trans
-    · apply CompEquiv.pair_cong_snd
-      -- Flip h_vuln from `snd (nB 0) ≈ iQ` to `iQ ≈ snd (nB 0)`
-      apply CompEquiv.symm
-      exact h_vuln
-    · -- Resolves `pair (fst (nB 0)) (snd (nB 0)) ≈ nB 0`
-      apply CompEquiv.surj_pair
--/
----
---- MAIN THEOREM: computational lifting
-
-
-/-
-- Γ : conjuction of atomic propositions (of form ml |> m or m1 ≈ m2)
-- Reach(ml, Γ) : my system can reach a state, where
-  - Γ is the path condition, and
-  - ml is the sequence of output messages (frame)
-  - Reach(ml, Γ) may be regarded as atomic predicate,
-    as it does not depend on possible worlds (really?)
-- n : secret nonce
-- φ* : The Fitting twist of φ in S4, where φ is FOL formula
-
-Then my secrecy claim would be written in FOL as:
-  secrecy : ∀ ml, Γ, (Reach(ml, Γ) ∧ Γ) → ¬(ml |> n)
-
-Then, Fitting twists gives:
-  secrecy* : ∀ ml, Γ, □((□⋄Reach(ml, Γ) ∧ Γ*) → □¬□⋄(ml |> n))
-which is equivalent to:
-  secrecy* : ∀ ml, Γ, □((Reach(ml, Γ) ∧ Γ*) → □¬□⋄(ml |> n))
-
-
--/
-
-
 
 
 
 ---
-notation:20 w " ⊨ₛ₄ " p => p w
+
 
 --- computational assumption. should be justified "computationally"
 --- i.e.: ∃ (w : K.World), ∀ (w' : K.World), K.R w w' ∧ (snd (nB 0) ≈ iQ) w'
-axiom ambiguity : K.root ⊨ₛ₄ ⋄□(snd (nB 0) ≈ iQ)
+---axiom weak_ambiguity : K.root ⊨ₛ₄ ⋄□(snd (nB 0) ≈ iQ)
+axiom ambiguity : K.root ⊨ₛ₄ ⋄□(nB 0 ≈ pair nQ iQ)
 
 --- computational secrecy
 --- Mᶜ ⊨ₛ₄ ϕ
@@ -379,22 +257,86 @@ axiom ambiguity : K.root ⊨ₛ₄ ⋄□(snd (nB 0) ≈ iQ)
 --- (need to show this by initiality of the symbolic model)
 --- A, S ⊨ₛ₄ ϕ for some S ⊆ Ω
 
+/-
+
+-/
+
+
+
+-- Notations (using standard modal logic unicode)
+-- Type \rRightarrow for ⤇ and \Leftrightarrow for ⇔
+
+
 axiom equiv_refl' : ∀ m, K.root ⊨ₛ₄ □⋄(m ≈ m)
+axiom equiv_cong_der' : ∀ {ml m1 m2},
+  K.root ⊨ₛ₄ □( □⋄(m1 ≈ m2) ⤇ □( □⋄(ml |> m1) ⇔ □⋄(ml |> m2) ) )
+
+/--
+Localized derivation congruence for indistinguishable messages.
+Allows for immediate rewriting (rw) of deriving m1 to deriving m2.
+-/
+lemma equiv_cong_der {ml : List Msg} {m1 m2 : Msg} {w : K.World}
+    (root_R_w : K.R K.root w)
+    (h_eq : □⋄(m1 ≈ m2) w) :
+    □⋄(ml |> m1) w ↔ □⋄(ml |> m2) w := by
+  have h_axiom := @equiv_cong_der' K _ (ml := ml) (m1 := m1) (m2 := m2)
+  have h_impl := h_axiom w root_R_w
+  have h_box_iff := h_impl h_eq
+  have h_miff := h_box_iff w (K.refl w)
+  exact h_miff
+
+-- Axiom 1: Congruence of snd
+axiom snd_cong' : ∀ {m1 m2},
+  K.root ⊨ₛ₄ □( □⋄(m1 ≈ m2) ⤇ □⋄(snd m1 ≈ snd m2) )
+
+lemma snd_cong {m1 m2 : Msg} {w : K.World}
+    (root_R_w : K.R K.root w)
+    (h_eq : □⋄(m1 ≈ m2) w) : □⋄(snd m1 ≈ snd m2) w := by
+  have h_axiom := @snd_cong' K _ (m1 := m1) (m2 := m2)
+  have h_impl := h_axiom w root_R_w
+  exact h_impl h_eq
+
+-- Axiom 2: Congruence of pk
+axiom pk_cong' : ∀ {m1 m2},
+  K.root ⊨ₛ₄ □( □⋄(m1 ≈ m2) ⤇ □⋄(m1.pk ≈ m2.pk) )
+
+lemma pk_cong {m1 m2 : Msg} {w : K.World}
+    (root_R_w : K.R K.root w)
+    (h_eq : □⋄(m1 ≈ m2) w) : □⋄(m1.pk ≈ m2.pk) w := by
+  have h_impl := pk_cong' (m1 := m1) (m2 := m2) w root_R_w
+  exact h_impl h_eq
+
+-- Axiom 3: Congruence of enc (on the key argument)
+axiom enc_cong_key' : ∀ {m rand key1 key2},
+  K.root ⊨ₛ₄ □( □⋄(key1 ≈ key2) ⤇ □⋄(enc m rand key1 ≈ enc m rand key2) )
+
+lemma enc_cong_key {m rand key1 key2 : Msg} {w : K.World}
+    (root_R_w : K.R K.root w)
+    (h_eq : □⋄(key1 ≈ key2) w) : □⋄(m.enc rand key1 ≈ m.enc rand key2) w := by
+  have h_impl := enc_cong_key' (m := m) (rand := rand) (key1 := key1) (key2 := key2) w root_R_w
+  exact h_impl h_eq
+
+-- Full 3-ary parallel congruence for Encryption
+axiom enc_cong' : ∀ {m1 m2 r1 r2 k1 k2},
+  K.root ⊨ₛ₄ □( (□⋄(m1 ≈ m2) ⋏ □⋄(r1 ≈ r2) ⋏ □⋄(k1 ≈ k2)) ⤇ □⋄(enc m1 r1 k1 ≈ enc m2 r2 k2) )
+
+/-- Localized full congruence for encryption -/
+lemma enc_cong {m1 m2 r1 r2 k1 k2 : Msg} {w : K.World}
+    (root_R_w : K.R K.root w) (h_m : □⋄(m1 ≈ m2) w) (h_r : □⋄(r1 ≈ r2) w) (h_k : □⋄(k1 ≈ k2) w)
+    : □⋄(enc m1 r1 k1 ≈ enc m2 r2 k2) w := by
+  have h_impl := enc_cong' (m1 := m1) (m2 := m2) (r1 := r1) (r2 := r2) (k1 := k1) (k2 := k2) w root_R_w
+  exact h_impl ⟨h_m, h_r, h_k⟩
+
 axiom att_none' : ∀ {ml}, K.root ⊨ₛ₄ □⋄(ml |> none)
 axiom att_mem' : ∀ {ml m}, m ∈ ml → (K.root ⊨ₛ₄ □⋄(ml |> m))
 
 def leak :=
   ∃ st ml,
     (conf0 ~(ml)~>* st) ∧
-    ∃ (w : K.World), (w ⊨ₛ₄ st.cond ⋏ □⋄(st.chan |> nB 0))
+    ∃ (w : K.World), w ⊨ₛ₄ (st.cond ⋏ □⋄(st.chan |> nB 0))
 
 
---- w r w' ∧ w ⊨ₛ₄ □⋄p → w ⊨ₛ₄ □⋄p
-lemma persist_ow {K : KripkeFrame} {P : K.World → Prop} {w w' : K.World}
-    (h_R : K.R w w') (h_boxdia : □⋄P w) : □⋄P w' := by
-  intro v h_w'_v
-  have h_w_v : K.R w v := K.trans h_R h_w'_v
-  exact h_boxdia v h_w_v
+
 
 theorem attack : @leak K _ := by
   unfold leak
@@ -417,12 +359,52 @@ theorem attack : @leak K _ := by
     apply persist_ow root_R_w (att_mem' h_mem)
   · apply persist_ow root_R_w att_none'
   · simp [mtrue]
-  · -- rewrite nB 0 = <nQ, iQ> using axiom
-    -- simp
-    sorry
+  · --- (possible improvement: tactic for modal equational reasoning exploiting cut-elimination of s4)
+    apply box_imp_box_dia at h_w
+
+    rw [equiv_cong_der root_R_w h_w]
+
+    have h_m4 : □⋄(m4 ≈ enc (pair (fst (pair nQ iQ)) (pair (nB 1) iB)) (r2 1) (pk iQ)) w := by
+      apply snd_cong root_R_w at h_w
+      apply pk_cong root_R_w at h_w
+      apply enc_cong root_R_w
 
 
 
+      apply enc_cong_key (m := pair (fst (nB 0)) (pair (nB 1) iB)) (rand := r2 1) root_R_w at h_w
+      apply h_w
+
+
+
+
+
+
+    have h_m4 : □⋄([m4, m3, m2, m1] |> m4) w := by
+      apply persist_ow root_R_w
+      apply att_mem'
+      simp [m4, m3, m2, m1]
+    simp [m1,m2,m3,m4] at h_m4
+
+    ---intro w' w_R_w'
+    ---have h_w' := h_w w' w_R_w'
+    ---use w'; refine ⟨sorry, ?_⟩
+    have h_cong_root := @equiv_cong_der' K _ (ml := [m4, m3, m2, m1]) (m1 := nB 0) (m2 := nQ.pair iQ)
+    have h_cong_w := h_cong_root w root_R_w
+    have h_w_dia : □⋄(nB 0 ≈ nQ.pair iQ) w := box_imp_box_dia h_w
+    have h_iff_box := h_cong_w h_w_dia
+    have h_iff := h_iff_box w (K.refl w)
+    unfold miff at h_iff
+    rw [h_iff]
+
+
+
+    simp [m1,m2,m3,m4]
+
+
+
+/-
+
+-/
 
 
 
