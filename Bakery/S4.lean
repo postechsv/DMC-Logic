@@ -21,9 +21,6 @@ def box {K : KripkeFrame} (P : MProp K) : MProp K :=
 def diamond {K : KripkeFrame} (P : MProp K) : MProp K :=
   fun w => ∃ v, K.R w v ∧ P v
 
-notation:max "□" P:max => box P
-notation:max "⋄" P:max => diamond P
-
 -- Modal True: A function that returns standard True in every world
 def mtrue {K : KripkeFrame} : MProp K :=
   fun _ => True
@@ -31,10 +28,6 @@ def mtrue {K : KripkeFrame} : MProp K :=
 -- Modal False: A function that returns standard False in every world
 def mfalse {K : KripkeFrame} : MProp K :=
   fun _ => False
-
--- Standard notation for Top (True) and Bottom (False)
--- notation " ⊤ " => mtrue
--- notation " ⊥ " => mfalse
 
 -- M, S ⊨ ϕ ∧ ψ  iff  M, S ⊨ ϕ  and  M, S ⊨ ψ
 def mand {K : KripkeFrame} (ϕ ψ : MProp K) : MProp K :=
@@ -67,6 +60,8 @@ def mimp {K : KripkeFrame} (p q : MProp K) : MProp K :=
 def miff {K : KripkeFrame} (p q : MProp K) : MProp K :=
   fun w => p w ↔ q w
 
+notation:max "□" P:max => box P
+notation:max "⋄" P:max => diamond P
 infixr:35 " ⋏ " => mand
 infixr:30 " ⋎ " => mor
 prefix:max "∼" => mnot
@@ -94,15 +89,10 @@ lemma axiom_4 {F : KripkeFrame} (P : MProp F) (w : F.World) :
   have hwu : F.R w u := F.trans hwv hvu
   exact hBox u hwu
 
-
-
 lemma necessitation {F : KripkeFrame} (P : MProp F) :
   (∀ w, P w) → (∀ w, (□ P) w) := by
   intro hValid w v _
-  -- Since P is true in EVERY world (`hValid`), it is trivially true in `v`.
-  -- We don't even need to look at the accessibility relation!
   exact hValid v
-
 
 --- w r w' ∧ w ⊨ₛ₄ □⋄p → w ⊨ₛ₄ □⋄p
 lemma persist_ow {K : KripkeFrame} {P : K.World → Prop} {w w' : K.World}
