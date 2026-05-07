@@ -329,7 +329,7 @@ lemma step4 : (conf3 : Conf K) ~(m3)~> conf4 := by
   sorry
 
 
-lemma trace : ∃ ml, (conf0 : Conf K) ~(ml)~>* conf4 := by
+lemma trace : ∃ xl, (conf0 : Conf K) ~(xl)~>* conf4 := by
   use [Msg.none, m1, m2, m3]
   exact Trace.trans (Trace.step step1) <|
         Trace.trans (Trace.step step2) <|
@@ -337,15 +337,13 @@ lemma trace : ∃ ml, (conf0 : Conf K) ~(ml)~>* conf4 := by
                     (Trace.step step4)
 
 
-
-
----
-
-
---- computational assumption. should be justified "computationally"
---- i.e.: ∃ (w : K.World), ∀ (w' : K.World), K.R w w' ∧ (snd (nB 0) ≈ iQ) w'
----axiom weak_ambiguity : K.root ⊨ₛ₄ ⋄□(snd (nB 0) ≈ iQ)
+--- axiom weak_ambiguity : K.root ⊨ₛ₄ ⋄□(snd (nB 0) ≈ iQ)
 axiom ambiguity : K.root ⊨ₛ₄ ⋄□(nB 0 ≈ pair nQ iQ)
+/- computational assumption. should be justified "computationally"
+   (proof sketch)
+     construct a non-negligible set w of random tapes s.t.
+     ∀ ρ ∈ w, ρ(nB 0) ≈ pair ρ(nQ) iQ
+-/
 
 --- computational secrecy
 --- Mᶜ ⊨ₛ₄ ϕ
@@ -357,20 +355,7 @@ axiom ambiguity : K.root ⊨ₛ₄ ⋄□(nB 0 ≈ pair nQ iQ)
 
 --- computational attack follows from symbolic attack
 --- (need to show this by initiality of the symbolic model)
---- A, S ⊨ₛ₄ ϕ for some S ⊆ Ω
-
-/-
-
--/
-
-
-
--- Notations (using standard modal logic unicode)
--- Type \rRightarrow for ⤇ and \Leftrightarrow for ⇔
-
-
-
-
+--- leak <=> A, S ⊨ₛ₄ ϕ for some S ⊆ Ω
 
 def leak :=
   ∃ st ml,
@@ -382,11 +367,14 @@ def leak :=
 theorem attack : @leak K _ := by
   unfold leak
   obtain ⟨ml, h_trace⟩ := @trace K _
-  obtain ⟨w, ⟨root_R_w, h_w⟩⟩ := @ambiguity K _
   use conf4; use ml; refine ⟨h_trace, ?_⟩
-  use w -- the non-negligible world where ambiguity holds
+
+  -- (CLICKME: the non-negligible world where ambiguity holds "absolutely")
+  obtain ⟨w, ⟨root_R_w, h_w⟩⟩ := @ambiguity K _; use w
+
   unfold conf4; simp [mand]
   refine ⟨⟨?_, ?_, ?_, ?_, ?_, ?_, ?_⟩,?_⟩
+
   --- (CLICKME: all 8 proof obligations)
   · have h_mem : m3 ∈ [m3,m2,m1] := by simp
     apply persist_ow root_R_w (CCSA.att_mem' h_mem) -- (CLICKME: using both S4 & CCSA)

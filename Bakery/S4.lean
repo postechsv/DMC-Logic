@@ -4,13 +4,15 @@ import Mathlib.Logic.Relation
 --- standard "computational" model of CCSA (a la Bana & Comon)
 --- where world  =  non-negligible set of random tapes
 ---   and w R v <=> w superset of v
---- TODO: should be called RootedKripkeFrame
+--- TODO: structure KripkeFrame (η : Nat)
+--- K η : KripkeFrame η
+--- assume ∀ w η ∈ K η, Pr(w η) is non-negligible as a function of η
 structure KripkeFrame where
-  World : Type
-  R : World → World → Prop
+  World : Type -- universe of non-negligible sets of random tapes (parameterized by η)
+  R : World → World → Prop -- w R w' iff w' ⊆ w
   refl : Reflexive R
   trans : Transitive R
-  root : World
+  root : World -- set of "all" random tapes (the maximal set)
   min : ∀ w, R root w
 
 def MProp (K : KripkeFrame) := K.World → Prop
