@@ -347,54 +347,78 @@ theorem attack : @leak K _ := by
   use conf4; use ml; refine ⟨h_trace, ?_⟩
 
   -- (CLICKME: the non-negligible world where ambiguity holds "absolutely")
-  obtain ⟨w, ⟨root_R_w, h_w⟩⟩ := @ambiguity K _; use w
+  obtain ⟨w, ⟨root_R_w, amb⟩⟩ := @ambiguity K _; use w
 
   unfold conf4; simp [mand]
   refine ⟨⟨?_, ?_, ?_, ?_, ?_, ?_, ?_⟩,?_⟩
 
   --- (CLICKME: all 8 proof obligations)
-  · have h_mem : m3 ∈ [m3,m2,m1] := by simp
-    apply persist_ow root_R_w (CCSA.att_mem' h_mem) -- (CLICKME: using both S4 & CCSA)
-  · have h_mem : m2 ∈ [m2,m1] := by simp
-    apply persist_ow root_R_w (CCSA.att_mem' h_mem)
-  · simp [m1,m2] -- □⋄(nA 0 ≈ nA 0) w
-    apply persist_ow root_R_w (CCSA.equiv_refl' _)
-  · simp [m1,m2] -- □⋄(iB ≈ iB) w
-    apply persist_ow root_R_w (CCSA.equiv_refl' _)
-  · have h_mem : m1 ∈ [m1] := by simp
-    apply persist_ow root_R_w (CCSA.att_mem' h_mem)
+  · apply persist_ow root_R_w (CCSA.att_mem' (by simp)) -- (CLICKME: using both S4 & CCSA)
+  · apply persist_ow root_R_w (CCSA.att_mem' (by simp))
+  · apply persist_ow root_R_w (CCSA.equiv_refl' _)
+  · apply persist_ow root_R_w (CCSA.equiv_refl' _)
+  · apply persist_ow root_R_w (CCSA.att_mem' (by simp))
   · apply persist_ow root_R_w CCSA.att_none'
   · simp [mtrue]
-  · --- STILL PROVING..
-    apply box_imp_box_dia at h_w
+  · /- Preprocess -/
 
-    have att : □⋄([m4, m3, m2, m1] |> m4) w := by
-      have h_mem : m4 ∈ [m4,m3,m2,m1] := by simp
-      apply persist_ow root_R_w (CCSA.att_mem' h_mem)
 
-    /-
-    obtain from att : □⋄([m4, m3, m2, m1] |> pair (fst (dec m4 (sk iQ))) iQ) w
-    -/
-    have att : □⋄([m4, m3, m2, m1] |> pair (fst (dec m4 (sk iQ))) iQ) w := by sorry
+    /- Construct attacker recipe by forward reasoning -/
+    have att : □⋄([m4, m3, m2, m1] |> pair (fst (dec m4 (sk iQ))) iQ) w := by
+      have att_m4 : □⋄([m4, m3, m2, m1] |> m4) w := by
+        apply persist_ow root_R_w (CCSA.att_mem' (by simp))
+      have att_iQ : □⋄([m4, m3, m2, m1] |> iQ) w := by
+        apply persist_ow root_R_w CCSA.iQ_att'
+      have att_sk : □⋄([m4, m3, m2, m1] |> iQ.sk) w := by
+        apply (CCSA.sk_att' w root_R_w)
+        exact att_iQ
+      have att_dec : □⋄([m4, m3, m2, m1] |> dec m4 (sk iQ)) w := by
+        apply ((CCSA.dec_att' (m := m4) (k := iQ.sk)) w root_R_w)
+        exact ⟨att_m4, att_sk⟩
+      have att_fst : □⋄([m4, m3, m2, m1] |> fst (dec m4 (sk iQ))) w := by
+        apply (CCSA.fst_att' (m := dec m4 (sk iQ))) w root_R_w
+        exact att_dec
+      have att_pair : □⋄([m4, m3, m2, m1] |> pair (fst (dec m4 (sk iQ))) iQ) w := by
+        apply (CCSA.pair_att' (m1 := fst (dec m4 (sk iQ))) (m2 := iQ)) w root_R_w
+        exact ⟨att_fst, att_iQ⟩
+      exact att_pair
 
-    -- (CLICKME: potential tactic - equational reasoning under overwheming equivalences)
-    rw [equiv_cong_der root_R_w h_w] -- see how nB 0 is rewritten via congruence axiom in CCSA
+    /- lift ambiguity to rewrite attacker recipe modulo overwhelmingness -/
+    apply box_imp_box_dia at amb
+    rw [equiv_cong_der root_R_w amb] -- (eliminate nB 0 in the goal by rewriting modulo overwhelmingness)
 
-    have h_m4 : □⋄(m4 ≈ enc (pair (fst (pair nQ iQ)) (pair (nB 1) iB)) (r2 1) (pk iQ)) w := by
-      apply snd_cong root_R_w at h_w
-      simp at h_w
-      apply pk_cong root_R_w at h_w
+    have amb_m1 : □⋄(m1 ≈ enc (pair (nA 0) iA) (r1 0) (pk iB)) w := by
+      simp [m1]
+      apply persist_ow root_R_w (CCSA.equiv_refl' _)
+
+
+
+
+    -- have amb_att : □⋄(pair (fst (dec m4 (sk iQ))) iQ ≈ nQ.pair iQ) w := by
+    --   simp [m4, m3, m2, m1]
+    --   have amb_snd : □⋄(snd (nB 0) ≈ iQ) w := sorry
+    --   have amb_fst : □⋄(snd (nB 0) ≈ iQ) w := sorry
+    --   sorry
+
+
+
+    have amb_m4 : □⋄(m4 ≈ enc (pair (fst (pair nQ iQ)) (pair (nB 1) iB)) (r2 1) (pk iQ)) w := by
+      apply snd_cong root_R_w at amb
+      simp at amb
+      apply pk_cong root_R_w at amb
       apply enc_cong root_R_w
-      · sorry
+      · simp [m3,m2,m1]
+        sorry
       · apply persist_ow root_R_w (CCSA.equiv_refl' _)
-      · simp [m3, m2, m1, h_w]
-    simp at h_m4 -- TODO: merge
+      · simp [m3, m2, m1, amb]
+    simp at amb_m4 -- TODO: merge
 
 
-    apply dec_cong (k1 := iQ.sk) (h_k := persist_ow root_R_w (CCSA.equiv_refl' _)) root_R_w at h_m4
-    simp at h_m4
-    apply fst_cong root_R_w at h_m4
-    simp at h_m4
-    apply pair_cong (m3 := iQ) (m4 := iQ) (h_right := persist_ow root_R_w (CCSA.equiv_refl' _)) root_R_w at h_m4
+    /- d -/
+    apply dec_cong (k1 := iQ.sk) (h_k := persist_ow root_R_w (CCSA.equiv_refl' _)) root_R_w at amb_m4
+    simp at amb_m4
+    apply fst_cong root_R_w at amb_m4
+    simp at amb_m4
+    apply pair_cong (m3 := iQ) (m4 := iQ) (h_right := persist_ow root_R_w (CCSA.equiv_refl' _)) root_R_w at amb_m4
 
-    rw [equiv_cong_der root_R_w h_m4] at att; assumption
+    rw [equiv_cong_der root_R_w amb_m4] at att; assumption
