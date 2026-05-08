@@ -60,33 +60,33 @@ notation ml " |> " m => comder ml m --- comder raises error!
 
 class CCSA (K : KripkeFrame) where
   equiv : Msg → Msg → MProp K
+  ---notation:50 m1 " ≈ " m2 => CCSA.equiv m1 m2
 
   -- the following generates Prop
-  refl  : ∀ w m , equiv m m w
-  symm  : ∀ w m1 m2, equiv m1 m2 w → equiv m2 m1 w
-  trans : ∀ w m1 m2 m3, equiv m1 m2 w → equiv m2 m3 w → equiv m1 m3 w
+  equiv_refl' : ∀ m, K.root ⊨ₛ₄ □⋄(equiv m m)
+  ---refl  : ∀ w m , equiv m m w
+  ---symm  : ∀ w m1 m2, equiv m1 m2 w → equiv m2 m1 w
+  ---trans : ∀ w m1 m2 m3, equiv m1 m2 w → equiv m2 m3 w → equiv m1 m3 w
 
   att_none' : ∀ {ml}, K.root ⊨ₛ₄ □⋄(ml |> none)
   att_mem' : ∀ {ml m}, m ∈ ml → (K.root ⊨ₛ₄ □⋄(ml |> m))
 
+  iQ_att' : ∀ {ml}, K.root ⊨ₛ₄ □⋄(ml |> iQ)
+  sk_att' : ∀ {ml m}, K.root ⊨ₛ₄ □( □⋄(ml |> m) ⤇ □⋄(ml |> sk m) )
+  fst_att' : ∀ {ml m}, K.root ⊨ₛ₄ □( □⋄(ml |> m) ⤇ □⋄(ml |> fst m) )
+  pair_att' : ∀ {ml m1 m2}, K.root ⊨ₛ₄ □( (□⋄(ml |> m1) ⋏ □⋄(ml |> m2)) ⤇ □⋄(ml |> pair m1 m2) )
+  dec_att' : ∀ {ml m k}, K.root ⊨ₛ₄ □( (□⋄(ml |> m) ⋏ □⋄(ml |> k)) ⤇ □⋄(ml |> dec m k) )
 
 notation:50 m1 " ≈ " m2 => CCSA.equiv m1 m2
 
 variable {K : KripkeFrame} -- we assume K faithfully represents possible worlds for PPTMs
 variable [CCSA K] -- we assume CCSA axioms are consistent
 
--- @[simp]
--- lemma CCSA_refl {m : Msg} : m ≈ m := CCSA.refl m
 
 
-axiom equiv_refl' : ∀ m, K.root ⊨ₛ₄ □⋄(m ≈ m)
 axiom equiv_cong_der' : ∀ {ml m1 m2},
   K.root ⊨ₛ₄ □( □⋄(m1 ≈ m2) ⤇ □( □⋄(ml |> m1) ⇔ □⋄(ml |> m2) ) )
 
-/--
-Localized derivation congruence for indistinguishable messages.
-Allows for immediate rewriting (rw) of deriving m1 to deriving m2.
--/
 lemma equiv_cong_der {ml : List Msg} {m1 m2 : Msg} {w : K.World}
     (root_R_w : K.R K.root w)
     (h_eq : □⋄(m1 ≈ m2) w) :
@@ -97,7 +97,15 @@ lemma equiv_cong_der {ml : List Msg} {m1 m2 : Msg} {w : K.World}
   have h_miff := h_box_iff w (K.refl w)
   exact h_miff
 
--- Axiom 1: Congruence of snd
+axiom fst_cong' : ∀ {m1 m2},
+  K.root ⊨ₛ₄ □( □⋄(m1 ≈ m2) ⤇ □⋄(fst m1 ≈ fst m2) )
+
+lemma fst_cong {m1 m2 : Msg} {w : K.World}
+    (root_R_w : K.R K.root w)
+    (h_eq : □⋄(m1 ≈ m2) w) : □⋄(fst m1 ≈ fst m2) w := by
+  have h_impl := fst_cong' (m1 := m1) (m2 := m2) w root_R_w
+  exact h_impl h_eq
+
 axiom snd_cong' : ∀ {m1 m2},
   K.root ⊨ₛ₄ □( □⋄(m1 ≈ m2) ⤇ □⋄(snd m1 ≈ snd m2) )
 
@@ -108,7 +116,35 @@ lemma snd_cong {m1 m2 : Msg} {w : K.World}
   have h_impl := h_axiom w root_R_w
   exact h_impl h_eq
 
--- Axiom 2: Congruence of pk
+axiom pair_cong' : ∀ {m1 m2 m3 m4},
+  K.root ⊨ₛ₄ □( (□⋄(m1 ≈ m2) ⋏ □⋄(m3 ≈ m4)) ⤇ □⋄(pair m1 m3 ≈ pair m2 m4) )
+
+lemma pair_cong {m1 m2 m3 m4 : Msg} {w : K.World}
+    (root_R_w : K.R K.root w)
+    (h_left : □⋄(m1 ≈ m2) w)
+    (h_right : □⋄(m3 ≈ m4) w) : □⋄(pair m1 m3 ≈ pair m2 m4) w := by
+  have h_impl := pair_cong' (m1 := m1) (m2 := m2) (m3 := m3) (m4 := m4) w root_R_w
+  exact h_impl ⟨h_left, h_right⟩
+
+axiom enc_cong' : ∀ {m1 m2 r1 r2 k1 k2},
+  K.root ⊨ₛ₄ □( (□⋄(m1 ≈ m2) ⋏ □⋄(r1 ≈ r2) ⋏ □⋄(k1 ≈ k2)) ⤇ □⋄(enc m1 r1 k1 ≈ enc m2 r2 k2) )
+
+lemma enc_cong {m1 m2 r1 r2 k1 k2 : Msg} {w : K.World}
+    (root_R_w : K.R K.root w) (h_m : □⋄(m1 ≈ m2) w) (h_r : □⋄(r1 ≈ r2) w) (h_k : □⋄(k1 ≈ k2) w)
+    : □⋄(enc m1 r1 k1 ≈ enc m2 r2 k2) w := by
+  have h_impl := enc_cong' (m1 := m1) (m2 := m2) (r1 := r1) (r2 := r2) (k1 := k1) (k2 := k2) w root_R_w
+  exact h_impl ⟨h_m, h_r, h_k⟩
+
+axiom dec_cong' : ∀ {c1 c2 k1 k2},
+  K.root ⊨ₛ₄ □( (□⋄(c1 ≈ c2) ⋏ □⋄(k1 ≈ k2)) ⤇ □⋄(dec c1 k1 ≈ dec c2 k2) )
+
+lemma dec_cong {c1 c2 k1 k2 : Msg} {w : K.World}
+    (root_R_w : K.R K.root w)
+    (h_c : □⋄(c1 ≈ c2) w)
+    (h_k : □⋄(k1 ≈ k2) w) : □⋄(dec c1 k1 ≈ dec c2 k2) w := by
+  have h_impl := dec_cong' (c1 := c1) (c2 := c2) (k1 := k1) (k2 := k2) w root_R_w
+  exact h_impl ⟨h_c, h_k⟩
+
 axiom pk_cong' : ∀ {m1 m2},
   K.root ⊨ₛ₄ □( □⋄(m1 ≈ m2) ⤇ □⋄(m1.pk ≈ m2.pk) )
 
@@ -118,75 +154,16 @@ lemma pk_cong {m1 m2 : Msg} {w : K.World}
   have h_impl := pk_cong' (m1 := m1) (m2 := m2) w root_R_w
   exact h_impl h_eq
 
--- Axiom 3: Congruence of enc (on the key argument)
-axiom enc_cong_key' : ∀ {m rand key1 key2},
-  K.root ⊨ₛ₄ □( □⋄(key1 ≈ key2) ⤇ □⋄(enc m rand key1 ≈ enc m rand key2) )
-
-lemma enc_cong_key {m rand key1 key2 : Msg} {w : K.World}
-    (root_R_w : K.R K.root w)
-    (h_eq : □⋄(key1 ≈ key2) w) : □⋄(m.enc rand key1 ≈ m.enc rand key2) w := by
-  have h_impl := enc_cong_key' (m := m) (rand := rand) (key1 := key1) (key2 := key2) w root_R_w
-  exact h_impl h_eq
-
--- Full 3-ary parallel congruence for Encryption
-axiom enc_cong' : ∀ {m1 m2 r1 r2 k1 k2},
-  K.root ⊨ₛ₄ □( (□⋄(m1 ≈ m2) ⋏ □⋄(r1 ≈ r2) ⋏ □⋄(k1 ≈ k2)) ⤇ □⋄(enc m1 r1 k1 ≈ enc m2 r2 k2) )
-
-/-- Localized full congruence for encryption -/
-lemma enc_cong {m1 m2 r1 r2 k1 k2 : Msg} {w : K.World}
-    (root_R_w : K.R K.root w) (h_m : □⋄(m1 ≈ m2) w) (h_r : □⋄(r1 ≈ r2) w) (h_k : □⋄(k1 ≈ k2) w)
-    : □⋄(enc m1 r1 k1 ≈ enc m2 r2 k2) w := by
-  have h_impl := enc_cong' (m1 := m1) (m2 := m2) (r1 := r1) (r2 := r2) (k1 := k1) (k2 := k2) w root_R_w
-  exact h_impl ⟨h_m, h_r, h_k⟩
-
---axiom att_none' : ∀ {ml}, K.root ⊨ₛ₄ □⋄(ml |> none)
---axiom att_mem' : ∀ {ml m}, m ∈ ml → (K.root ⊨ₛ₄ □⋄(ml |> m))
-
--- Congruence for fst (1 argument)
-axiom fst_cong' : ∀ {m1 m2},
-  K.root ⊨ₛ₄ □( □⋄(m1 ≈ m2) ⤇ □⋄(fst m1 ≈ fst m2) )
-
--- Congruence for sk (1 argument)
 axiom sk_cong' : ∀ {m1 m2},
   K.root ⊨ₛ₄ □( □⋄(m1 ≈ m2) ⤇ □⋄(sk m1 ≈ sk m2) )
 
--- Full parallel congruence for pair (2 arguments)
-axiom pair_cong' : ∀ {m1 m2 m3 m4},
-  K.root ⊨ₛ₄ □( (□⋄(m1 ≈ m2) ⋏ □⋄(m3 ≈ m4)) ⤇ □⋄(pair m1 m3 ≈ pair m2 m4) )
-
--- Full parallel congruence for dec (2 arguments: ciphertext and key)
-axiom dec_cong' : ∀ {c1 c2 k1 k2},
-  K.root ⊨ₛ₄ □( (□⋄(c1 ≈ c2) ⋏ □⋄(k1 ≈ k2)) ⤇ □⋄(dec c1 k1 ≈ dec c2 k2) )
-
-/-- Localized congruence for fst -/
-lemma fst_cong {m1 m2 : Msg} {w : K.World}
-    (root_R_w : K.R K.root w)
-    (h_eq : □⋄(m1 ≈ m2) w) : □⋄(fst m1 ≈ fst m2) w := by
-  have h_impl := fst_cong' (m1 := m1) (m2 := m2) w root_R_w
-  exact h_impl h_eq
-
-/-- Localized congruence for sk -/
 lemma sk_cong {m1 m2 : Msg} {w : K.World}
     (root_R_w : K.R K.root w)
     (h_eq : □⋄(m1 ≈ m2) w) : □⋄(sk m1 ≈ sk m2) w := by
   have h_impl := sk_cong' (m1 := m1) (m2 := m2) w root_R_w
   exact h_impl h_eq
 
-/-- Localized full parallel congruence for pair -/
-lemma pair_cong {m1 m2 m3 m4 : Msg} {w : K.World}
-    (root_R_w : K.R K.root w)
-    (h_left : □⋄(m1 ≈ m2) w)
-    (h_right : □⋄(m3 ≈ m4) w) : □⋄(pair m1 m3 ≈ pair m2 m4) w := by
-  have h_impl := pair_cong' (m1 := m1) (m2 := m2) (m3 := m3) (m4 := m4) w root_R_w
-  exact h_impl ⟨h_left, h_right⟩
 
-/-- Localized full parallel congruence for decryption -/
-lemma dec_cong {c1 c2 k1 k2 : Msg} {w : K.World}
-    (root_R_w : K.R K.root w)
-    (h_c : □⋄(c1 ≈ c2) w)
-    (h_k : □⋄(k1 ≈ k2) w) : □⋄(dec c1 k1 ≈ dec c2 k2) w := by
-  have h_impl := dec_cong' (c1 := c1) (c2 := c2) (k1 := k1) (k2 := k2) w root_R_w
-  exact h_impl ⟨h_c, h_k⟩
 
 
 /-
@@ -381,9 +358,9 @@ theorem attack : @leak K _ := by
   · have h_mem : m2 ∈ [m2,m1] := by simp
     apply persist_ow root_R_w (CCSA.att_mem' h_mem)
   · simp [m1,m2] -- □⋄(nA 0 ≈ nA 0) w
-    apply persist_ow root_R_w (equiv_refl' _)
+    apply persist_ow root_R_w (CCSA.equiv_refl' _)
   · simp [m1,m2] -- □⋄(iB ≈ iB) w
-    apply persist_ow root_R_w (equiv_refl' _)
+    apply persist_ow root_R_w (CCSA.equiv_refl' _)
   · have h_mem : m1 ∈ [m1] := by simp
     apply persist_ow root_R_w (CCSA.att_mem' h_mem)
   · apply persist_ow root_R_w CCSA.att_none'
@@ -391,8 +368,16 @@ theorem attack : @leak K _ := by
   · --- STILL PROVING..
     apply box_imp_box_dia at h_w
 
+    have att : □⋄([m4, m3, m2, m1] |> m4) w := by
+      have h_mem : m4 ∈ [m4,m3,m2,m1] := by simp
+      apply persist_ow root_R_w (CCSA.att_mem' h_mem)
+
+    /-
+    obtain from att : □⋄([m4, m3, m2, m1] |> pair (fst (dec m4 (sk iQ))) iQ) w
+    -/
+    have att : □⋄([m4, m3, m2, m1] |> pair (fst (dec m4 (sk iQ))) iQ) w := by sorry
+
     -- (CLICKME: potential tactic - equational reasoning under overwheming equivalences)
-    -- discussion: could this be further improved as tactics?
     rw [equiv_cong_der root_R_w h_w] -- see how nB 0 is rewritten via congruence axiom in CCSA
 
     have h_m4 : □⋄(m4 ≈ enc (pair (fst (pair nQ iQ)) (pair (nB 1) iB)) (r2 1) (pk iQ)) w := by
@@ -401,15 +386,15 @@ theorem attack : @leak K _ := by
       apply pk_cong root_R_w at h_w
       apply enc_cong root_R_w
       · sorry
-      · sorry
+      · apply persist_ow root_R_w (CCSA.equiv_refl' _)
       · simp [m3, m2, m1, h_w]
     simp at h_m4 -- TODO: merge
 
-    have h_m4' : □⋄( pair (fst (dec m4 (sk iQ))) iQ ≈ pair (fst (dec ((nQ.pair ((nB 1).pair iB)).enc (r2 1) iQ.pk) (sk iQ))) iQ ) w := by
-      sorry
-    simp at h_m4' -- TODO: merge
 
-    have guess : □⋄([m4, m3, m2, m1] |> pair (fst (dec m4 (sk iQ))) iQ) w := by
-      sorry
+    apply dec_cong (k1 := iQ.sk) (h_k := persist_ow root_R_w (CCSA.equiv_refl' _)) root_R_w at h_m4
+    simp at h_m4
+    apply fst_cong root_R_w at h_m4
+    simp at h_m4
+    apply pair_cong (m3 := iQ) (m4 := iQ) (h_right := persist_ow root_R_w (CCSA.equiv_refl' _)) root_R_w at h_m4
 
-    sorry
+    rw [equiv_cong_der root_R_w h_m4] at att; assumption
