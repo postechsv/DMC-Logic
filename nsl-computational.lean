@@ -64,9 +64,8 @@ class CCSA (K : KripkeFrame) where
 
   -- the following generates Prop
   equiv_refl' : ∀ m, K.root ⊨ₛ₄ □⋄(equiv m m)
-  ---refl  : ∀ w m , equiv m m w
-  ---symm  : ∀ w m1 m2, equiv m1 m2 w → equiv m2 m1 w
-  ---trans : ∀ w m1 m2 m3, equiv m1 m2 w → equiv m2 m3 w → equiv m1 m3 w
+  cong_symm' : ∀ {m1 m2}, K.root ⊨ₛ₄ □( □⋄(equiv m1 m2) ⤇ □⋄(equiv m2 m1) )
+  cong_trans' : ∀ {m1 m2 m3}, K.root ⊨ₛ₄ □( (□⋄(equiv m1 m2) ⋏ □⋄(equiv m2 m3)) ⤇ □⋄(equiv m1 m3) )
 
   att_none' : ∀ {ml}, K.root ⊨ₛ₄ □⋄(ml |> none)
   att_mem' : ∀ {ml m}, m ∈ ml → (K.root ⊨ₛ₄ □⋄(ml |> m))
@@ -391,28 +390,24 @@ theorem attack : @leak K _ := by
       simp [m1]
       apply persist_ow root_R_w (CCSA.equiv_refl' _)
 
-
-
-
-    -- have amb_att : □⋄(pair (fst (dec m4 (sk iQ))) iQ ≈ nQ.pair iQ) w := by
-    --   simp [m4, m3, m2, m1]
-    --   have amb_snd : □⋄(snd (nB 0) ≈ iQ) w := sorry
-    --   have amb_fst : □⋄(snd (nB 0) ≈ iQ) w := sorry
-    --   sorry
-
-
+    --- used in amb_m4
+    have hhh : □⋄((fst (nB 0)).pair ((nB 1).pair iB) ≈ nQ.pair ((nB 1).pair iB)) w := by
+      have h1 : □⋄(fst (nB 0) ≈ fst (nQ.pair iQ)) w := fst_cong root_R_w amb
+      have h2 : □⋄(fst (nQ.pair iQ) ≈ nQ) w := persist_ow root_R_w (CCSA.equiv_refl' _)
+      have h_left : □⋄(fst (nB 0) ≈ nQ) w := by
+        apply CCSA.cong_trans' (m2 := fst (nQ.pair iQ)) w root_R_w
+        exact ⟨h1, h2⟩
+      apply pair_cong root_R_w h_left (persist_ow root_R_w (CCSA.equiv_refl' _))
 
     have amb_m4 : □⋄(m4 ≈ enc (pair (fst (pair nQ iQ)) (pair (nB 1) iB)) (r2 1) (pk iQ)) w := by
       apply snd_cong root_R_w at amb
       simp at amb
       apply pk_cong root_R_w at amb
       apply enc_cong root_R_w
-      · simp [m3,m2,m1]
-        sorry
+      · simp [m3,m2,m1,hhh]
       · apply persist_ow root_R_w (CCSA.equiv_refl' _)
       · simp [m3, m2, m1, amb]
     simp at amb_m4 -- TODO: merge
-
 
     /- d -/
     apply dec_cong (k1 := iQ.sk) (h_k := persist_ow root_R_w (CCSA.equiv_refl' _)) root_R_w at amb_m4
