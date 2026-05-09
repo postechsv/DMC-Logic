@@ -103,6 +103,13 @@ lemma persist_ow {K : KripkeFrame} {P : K.World → Prop} {w w' : K.World}
   have h_w_v : K.R w v := K.trans h_R h_w'_v
   exact h_boxdia v h_w_v
 
+-- w R w' ∧ w ⊨ₛ₄ □p → w' ⊨ₛ₄ □p
+lemma persist_box {K : KripkeFrame} {P : K.World → Prop} {w w' : K.World}
+    (h_R : K.R w w') (h_box : □P w) : □P w' := by
+  intro v h_w'_v
+  have h_w_v : K.R w v := K.trans h_R h_w'_v
+  exact h_box v h_w_v
+
 lemma box_imp_box_dia {K : KripkeFrame} {P : K.World → Prop} {w : K.World}
     (h_box : □ P w) : □⋄ P w := by
   intro w' h_w_w'
