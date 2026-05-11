@@ -62,15 +62,20 @@ inductive Step {K : KripkeFrame} [CCSA K] (w : K.World) (x : Msg) : Conf → Con
 
 --- guarded Conf
 structure GConf {K : KripkeFrame} where
-  conf : Conf
-  cond : Conf → MProp K
+  guard : Conf → MProp K
 
--- same signature as Step, except for GConf
-def GStep {K : KripkeFrame} [CCSA K] (w : K.World) (x : Msg) (c1 : @GConf K) (c2 : @GConf K) : Prop :=
-  (c1.cond c1.conf) w -> (@Step K _  w x c1.conf c2.conf)
+-- EXISTENTIAL lifting of Step
+-- used for proving the existence of an attack
+def EStep {K : KripkeFrame} [CCSA K] (w : K.World) (x : Msg) (g1 : @GConf K) (g2 : @GConf K) : Prop :=
+  ∃ (cf cf' : Conf), g1.guard cf w ∧ @Step K _ w x cf cf' ∧ g2.guard cf' w
+
+-- UNIVERSAL lifting of Step
+-- used as predicate transformer for invariants
+def AStep {K : KripkeFrame} [CCSA K] (w : K.World) (x : Msg) (g1 : @GConf K) (g2 : @GConf K) : Prop :=
+  ∀ (cf cf' : Conf), g1.guard cf w ∧ @Step K _ w x cf cf' → g2.guard cf' w
 
 --- world should be explicit in the notation
-notation:110 st1 " ~(" w " , "x ")~> " st2 => GStep w x st1 st2
+notation:110 st1 " ~(" w " , "x ")~> " st2 => EStep w x st1 st2
 
 
 /- end of NSL definition -/
@@ -80,8 +85,9 @@ def conf0 : Conf := {
   chan := [],
   ctrl := {session 0 ACtrl.a0 BCtrl.b0, session 1 ACtrl.a0 BCtrl.b0},
 }
-def pred0 {K : KripkeFrame} [CCSA K] (_ : Conf) : MProp K := mtrue
-def cf0 {K : KripkeFrame} [CCSA K] : @GConf K := { conf := conf0, cond := pred0 }
+def pred0 {K : KripkeFrame} [CCSA K] (cf : Conf) : MProp K :=
+  (fun _ => (cf = conf0)) ⋏ mtrue
+def cf0 {K : KripkeFrame} [CCSA K] : @GConf K := { guard := pred0 }
 
 --- output of a1
 def m1 : Msg := enc (pair (nA 0) iA) (r1 0) (pk iB)
@@ -89,13 +95,20 @@ def m1 : Msg := enc (pair (nA 0) iA) (r1 0) (pk iB)
 def conf1 : Conf :=
   { chan := [m1],
     ctrl := {session 0 ACtrl.a1 BCtrl.b0, session 1 ACtrl.a0 BCtrl.b0} }
-def pred1 {K : KripkeFrame} [CCSA K] (_ : Conf) : MProp K := fun w => (□⋄([] ▷ none) ⋏ mtrue)  w
-def cf1 {K : KripkeFrame} [CCSA K] : @GConf K := { conf := conf1, cond := pred1 }
+def pred1 {K : KripkeFrame} [CCSA K] (cf : Conf) : MProp K :=
+  fun w => cf = conf1 ∧ (□⋄([] ▷ none) ⋏ mtrue) w
+def cf1 {K : KripkeFrame} [CCSA K] : @GConf K := { guard := pred1 }
 
 lemma step1 {K : KripkeFrame} [CCSA K] : cf0 ~( K.root , none )~> cf1 := by
   unfold GStep
-  simp [cf0, pred0]
-  intro h_cond
+  intro cf cf' h_cf h_step
+  simp [cf0, pred0] at h_cf
+  simp [cf1, pred1]; constructor
+  ·
+    sorry
+  · sorry
+
+
   apply Step.a1 0 [] BCtrl.b0 {session 1 ACtrl.a0 BCtrl.b0}
   /- sat check: K.root ⊨ₛ₄ □⋄([] ▷ Msg.none) -/
   apply CCSA.deriv_none
