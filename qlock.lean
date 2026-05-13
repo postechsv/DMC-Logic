@@ -17,7 +17,7 @@ instance : State Conf := ⟨⟩
 
 
 
-inductive Step : Conf → Conf → Prop where
+inductive Step : Transition Conf where
   -- n2w:    ⟨ n i | w | c | q ⟩     →    ⟨ n | w i | c | q ; i ⟩
   | n2w : ∀ (i : Nat) (n w c : Multiset Nat) (q : List Nat),
       Step
@@ -32,7 +32,7 @@ inductive Step : Conf → Conf → Prop where
   | c2n : ∀ (i : Nat) (n w c : Multiset Nat) (q : List Nat),
       Step ⟨ n, w, i ::ₘ c, i :: q ⟩ ⟨ i ::ₘ n, w, c, q ⟩
 
-  -- join:   ⟨ n | w | c | q ⟩       →    ⟨ n i | w | c | q ⟩  if ¬ dupl(n i w c)
+  -- **join**:   ⟨ n | w | c | q ⟩       →    ⟨ n **i** | w | c | q ⟩  if ¬ dupl(n i w c)
   | join : ∀ (i : Nat) (n w c : Multiset Nat) (q : List Nat),
       (i ∉ n + w + c) →
       Step ⟨ n, w, c, q ⟩ ⟨ i ::ₘ n, w, c, q ⟩
@@ -43,6 +43,8 @@ inductive Step : Conf → Conf → Prop where
 
 --- DMC: Define the System instance for Conf
 instance : System Conf := ⟨Step⟩
+
+
 
 open Lean Meta Elab Command Term
 
@@ -140,10 +142,26 @@ def pred2 (cf : Conf) : Prop :=
 
 def inv (cf : Conf) : Prop := pred1 cf ∨ pred2 cf
 
-#check pred1 -- Conf → Prop
-#check pred2 -- Conf → Prop
-#check inv   -- Conf → Prop
+#check (pred1 : Pattern Conf) -- Conf → Prop
+#check (pred2 : Pattern Conf) -- Conf → Prop
+#check (inv : Pattern Conf)   -- Conf → Prop
 
 
-lemma inv_ind : PStep Conf ⟨inv⟩ ⟨inv⟩ := sorry
-lemma inv_init : PStep Conf ⟨init⟩ ⟨inv⟩ := sorry
+lemma inv_ind : (stepUp Step) inv inv := sorry
+lemma inv_init : (stepUp Step) init inv := sorry
+
+-- ⟨ 1 ::ₘ 0 , ∅, ∅, List.nil ⟩ => ⟨ {0}, {1}, ∅, [1] ⟩
+def cf0 (cf : Conf) : Prop := cf = ⟨ 1 ::ₘ 0 , ∅, ∅, List.nil ⟩
+def cf1 (cf : Conf) : Prop := cf = ⟨ {0}, {1}, ∅, [1] ⟩
+
+lemma step_0_1 : PStep Conf ⟨cf0⟩ ⟨cf1⟩ := by
+
+  sorry
+
+--lemma step1 : ⟨ 1 ::ₘ 0 , ∅, ∅, List.nil ⟩ => ⟨ {0}, {1}, ∅, [1] ⟩
+
+-- pattern lifting for states
+def state2pat (cf : Conf) : Pattern Conf := sorry
+
+
+lemma trace : ∃ cf cf', PStep Conf (state2pat cf) (state2pat cf') := sorry
