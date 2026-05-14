@@ -147,7 +147,7 @@ def inv (cf : Conf) : Prop := pred1 cf ∨ pred2 cf
 #check (inv : Pattern Conf)   -- Conf → Prop
 
 
-lemma inv_ind : (stepUp Step) inv inv := sorry
+lemma inv_ind : (↑Step : Transformer Conf) inv inv := sorry
 lemma inv_init : (stepUp Step) init inv := sorry
 
 -- ⟨ 1 ::ₘ 0 , ∅, ∅, List.nil ⟩ => ⟨ {0}, {1}, ∅, [1] ⟩
