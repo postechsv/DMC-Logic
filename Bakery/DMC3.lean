@@ -14,33 +14,26 @@ class State (α : Type u) where
 abbrev Pattern (α : Type u) [State α] := α → Prop
 
 -- ⊔ for Patterns
-def joinP {α : Type u} [State α] (p1 p2 : Pattern α) : Pattern α :=
-  fun st => p1 st ∨ p2 st
-
 instance {α : Type u} [State α] : Max (Pattern α) where
-  max := joinP
+  max p1 p2 := fun st => p1 st ∨ p2 st
 
--- define ↑ from State to Pattern
-def stateUp {α : Type u} [State α] : α → Pattern α :=
-  fun st => fun st' => st' = st
-
+-- ↑ from State to Pattern
 instance {α : Type u} [State α] : Coe α (Pattern α) where
-  coe := stateUp
+  coe st := fun st' => st' = st
 
 
 /-
   **Transition α** : α → α → Prop
 -/
--- (inductively defined) set of rules (i.e. Rewrite Theory)
 abbrev Transition (α : Type u) [State α] := α → α → Prop
 
 -- ⊔ for Transitions
-def joinT {α : Type u} [State α] (t1 t2 : Transition α) : Transition α :=
-  fun st st' => t1 st st' ∨ t2 st st'
-
 instance {α : Type u} [State α] : Max (Transition α) where
-  max := joinT
+  max t1 t2 := fun st st' => t1 st st' ∨ t2 st st'
 
+-- ≤ for Transitions
+instance {α : Type u} [State α] : LE (Transition α) where
+  le t1 t2 := ∀ st st', t1 st st' → t2 st st'
 
 
 /-
@@ -49,26 +42,17 @@ instance {α : Type u} [State α] : Max (Transition α) where
 -/
 abbrev Transformer (α : Type u) [State α] := (α → Prop) → (α → Prop) → Prop
 
--- (α → α → Prop) → ( (α → Prop) → (α → Prop) → Prop )
-def stepUp {α : Type u} [State α] : Transition α → Transformer α :=
-  fun t => fun p p' => ∀ st st', p st → t st st' → p' st'
-
+-- ↑ from Transition α to Transformer α
 instance {α : Type u} [State α] : Coe (Transition α) (Transformer α) where
-  coe := stepUp
+  coe t := fun p p' => ∀ st st', p st → t st st' → p' st'
 
 -- ⊔ for Transformers
-def joinPT {α : Type u} [State α] (t1 t2 : Transformer α) : Transformer α :=
-  fun p p' => t1 p p' ∨ t2 p p'
-
 instance {α : Type u} [State α] : Max (Transformer α) where
-  max := joinPT
+  max t1 t2 := fun p p' => t1 p p' ∨ t2 p p'
 
 -- ⊓ for Transformers
-def meetPT {α : Type u} [State α] (t1 t2 : Transformer α) : Transformer α :=
-  fun p p' => t1 p p' ∧ t2 p p'
-
 instance {α : Type u} [State α] : Min (Transformer α) where
-  min := meetPT
+  min t1 t2 := fun p p' => t1 p p' ∧ t2 p p'
 
 
 /-
@@ -97,6 +81,13 @@ lemma TransComp {α : Type u} [State α] (t1 t2 : Transition α) (p p' : Pattern
   · rintro ⟨h1, h2⟩ st st' hp (ht1 | ht2)
     · exact h1 st st' hp ht1
     · exact h2 st st' hp ht2
+
+lemma TransComp' {α : Type u} [State α] (t1 t2 : Transition α) (p p' : Pattern α)
+  (h_le : t1 ≤ t2) -- t1 is stricter than t2
+  (h_safe : (↑t2 : Transformer α) p p') : -- t2 is safe
+  (↑t1 : Transformer α) p p' := by
+  intro st st' hp ht1
+  exact h_safe st st' hp (h_le st st' ht1)
 
 -- ↑(t1 ⊔ t2) = ↑t1 ⊓ ↑t2
 -- To prove post-image safety w.r.t. a set of rules, we may decompose the proof into smaller pieces
@@ -136,3 +127,15 @@ lemma PostComp {α : Type u} [State α] (t : Transition α) (p p1 p2 : Pattern �
   · exact Or.inl (h1 st st' hp ht)
   -- Case 2: t guarantees p2
   · exact Or.inr (h2 st st' hp ht)
+
+/- Decomposition rule for post-conditions (unidirectional)
+        p ⇒ p'  p' ≤ p''
+      -------------------- (PostComp)
+           p ⇒ p''
+-/
+lemma postComp' {α : Type u} [State α] (t : Transition α) (p p' p'' : Pattern α)
+  (h_step : (↑t : Transformer α) p p')
+  (h_le : p' ≤ p'') :
+  (↑t : Transformer α) p p'' := by
+  intro st st' hp ht
+  exact h_le st' (h_step st st' hp ht)
