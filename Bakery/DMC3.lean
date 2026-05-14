@@ -3,7 +3,10 @@ import Mathlib.Order.Lattice
 
 universe u
 
--- this is merely a marker class i.e. empty fields
+/-
+  **α** = The type of States registered by user
+  (merely a marker class i.e. empty fields)
+-/
 class State (α : Type u) where
 
 
@@ -39,6 +42,8 @@ instance {α : Type u} [State α] : LE (Transition α) where
 /-
   **Transformer α** : Pattern α → Pattern α → Prop
   (Note) The term "transformer" may be misleading: it is a relation, not a function
+  (Notation) p ⇒ p'
+  (Definition) post(p) ⊆ p'
 -/
 abbrev Transformer (α : Type u) [State α] := (α → Prop) → (α → Prop) → Prop
 
@@ -130,7 +135,7 @@ lemma PostComp {α : Type u} [State α] (t : Transition α) (p p1 p2 : Pattern �
 
 /- Decomposition rule for post-conditions (unidirectional)
         p ⇒ p'  p' ≤ p''
-      -------------------- (PostComp)
+      -------------------- (PostComp')
            p ⇒ p''
 -/
 lemma postComp' {α : Type u} [State α] (t : Transition α) (p p' p'' : Pattern α)
