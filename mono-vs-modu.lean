@@ -3,7 +3,20 @@ import Bakery.DMC3
 import Mathlib.Data.Multiset.Basic
 import Mathlib.Data.Multiset.AddSub
 
+/-
+Because your Step relation is non-recursive (none of the constructors take a Step as a hypothesis),
+defining it as a single monolithic inductive type is mathematically and logically identical to
+defining five separate transition relations and joining them with your ⊔ operator.
 
+The Mathematical Equivalence
+An inductive definition in Lean creates the smallest relation closed under its constructors.
+For non-recursive types, this is literally just the existential quantification
+of the parameters joined by logical OR (∨).
+
+Because your ⊔ operator is defined as point-wise logical OR (t1 st st' ∨ t2 st st'),
+the supremum of the five individual steps is the exact same mathematical object
+as the monolithic inductive type.
+-/
 
 
 structure Conf where
@@ -19,13 +32,11 @@ instance : State Conf := ⟨⟩
 --        Monolithic Approach
 -- ==========================================
 inductive MonolithicStep : Transition Conf where
-  -- n2w:    ⟨ n i | w | c | q ⟩     →    ⟨ n | w i | c | q ; i ⟩
   | n2w : ∀ (i : Nat) (n w c : Multiset Nat) (q : List Nat),
       MonolithicStep
         ⟨ i ::ₘ n, w, c, q ⟩
         ⟨ n, i ::ₘ w, c, q ++ [i] ⟩
 
-  -- w2c:  ⟨ n | w i | c | i ; q ⟩   →    ⟨ n | w | c i | i ; q ⟩
   | w2c : ∀ (i : Nat) (n w c : Multiset Nat) (q : List Nat),
       MonolithicStep ⟨ n, i ::ₘ w, c, i :: q ⟩ ⟨ n, w, i ::ₘ c, i :: q ⟩
 
