@@ -72,10 +72,12 @@ class System (α : Type u) [State α] where
 
 /- Decomposition rule for transformers (bidirectional)
         p ⇒₁ p'     p ⇒₂ p'
-      ======================= (TransComp)
+      ======================= (SComp)
           p (⇒₁ ⊔ ⇒₂) p'
+
+  or equivalently: ↑(t1 ⊔ t2) = ↑t1 ⊓ ↑t2
 -/
-lemma TransComp {α : Type u} [State α] (t1 t2 : Transition α) (p p' : Pattern α) :
+lemma SComp {α : Type u} [State α] (t1 t2 : Transition α) (p p' : Pattern α) :
   (↑(t1 ⊔ t2) : Transformer α) p p' ↔ (↑t1 : Transformer α) p p' ∧ (↑t2 : Transformer α) p p' := by
   constructor
   -- If "joined" post-image of p is in p', then so are "individual" post-images
@@ -87,26 +89,24 @@ lemma TransComp {α : Type u} [State α] (t1 t2 : Transition α) (p p' : Pattern
     · exact h1 st st' hp ht1
     · exact h2 st st' hp ht2
 
-lemma TransComp' {α : Type u} [State α] (t1 t2 : Transition α) (p p' : Pattern α)
+lemma SComp' {α : Type u} [State α] (t1 t2 : Transition α) (p p' : Pattern α)
   (h_le : t1 ≤ t2) -- t1 is stricter than t2
   (h_safe : (↑t2 : Transformer α) p p') : -- t2 is safe
   (↑t1 : Transformer α) p p' := by
   intro st st' hp ht1
   exact h_safe st st' hp (h_le st st' ht1)
 
--- ↑(t1 ⊔ t2) = ↑t1 ⊓ ↑t2
--- To prove post-image safety w.r.t. a set of rules, we may decompose the proof into smaller pieces
-lemma TransComp_eq {α : Type u} [State α] (t1 t2 : Transition α) :
+lemma SComp_eq {α : Type u} [State α] (t1 t2 : Transition α) :
   (↑(t1 ⊔ t2) : Transformer α) = (↑t1 : Transformer α) ⊓ (↑t2 : Transformer α) := by
   ext p p' -- using function extensionality axiom
-  exact TransComp t1 t2 p p'
+  exact SComp t1 t2 p p'
 
-/- Decomposition rule for pre-conditions (bidirectional)
+/- Decomposition rule for LHS of Step (bidirectional)
         p1 ⇒ p     p2 ⇒ p
-      ====================== (PreComp)
+      ====================== (LComp)
           p1 ⊔ p2 ⇒ p
 -/
-lemma PreComp {α : Type u} [State α] (t : Transition α) (p p1 p2 : Pattern α) :
+lemma LComp {α : Type u} [State α] (t : Transition α) (p p1 p2 : Pattern α) :
   (↑t : Transformer α) (p1 ⊔ p2) p ↔ (↑t : Transformer α) p1 p ∧ (↑t : Transformer α) p2 p := by
   constructor
   -- Forward (->): If it's safe from the union, it's safe from each individual part
@@ -119,12 +119,12 @@ lemma PreComp {α : Type u} [State α] (t : Transition α) (p p1 p2 : Pattern α
     · exact h1 st st' hp1 ht
     · exact h2 st st' hp2 ht
 
-/- Decomposition rule for post-conditions (unidirectional)
+/- Decomposition rule for RHS of Step (unidirectional)
           p ⇒ p1
-      ----------------- (PostComp)
+      ----------------- (RComp)
         p ⇒ p1 ⊔ p2
 -/
-lemma PostComp {α : Type u} [State α] (t : Transition α) (p p1 p2 : Pattern α) :
+lemma RComp {α : Type u} [State α] (t : Transition α) (p p1 p2 : Pattern α) :
   (↑t : Transformer α) p p1 ∨ (↑t : Transformer α) p p2 → (↑t : Transformer α) p (p1 ⊔ p2) := by
   -- Assume one of the transitions is strictly guaranteed
   rintro (h1 | h2) st st' hp ht
@@ -133,12 +133,12 @@ lemma PostComp {α : Type u} [State α] (t : Transition α) (p p1 p2 : Pattern �
   -- Case 2: t guarantees p2
   · exact Or.inr (h2 st st' hp ht)
 
-/- Decomposition rule for post-conditions (unidirectional)
+/- Decomposition rule for RHS of Step (unidirectional)
         p ⇒ p'  p' ≤ p''
-      -------------------- (PostComp')
+      -------------------- (RComp')
            p ⇒ p''
 -/
-lemma postComp' {α : Type u} [State α] (t : Transition α) (p p' p'' : Pattern α)
+lemma RComp' {α : Type u} [State α] (t : Transition α) (p p' p'' : Pattern α)
   (h_step : (↑t : Transformer α) p p')
   (h_le : p' ≤ p'') :
   (↑t : Transformer α) p p'' := by
