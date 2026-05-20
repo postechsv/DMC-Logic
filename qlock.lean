@@ -63,8 +63,10 @@ inductive step_exit : Transition Conf where
   | mk : ∀ (i : Nat) (n w c : Multiset Nat) (q : List Nat),
       step_exit ⟨ i ::ₘ n, w, c, q ⟩ ⟨ n, w, c, q ⟩
 
-
 def Step : Transition Conf :=
+  step_n2w ⊔ step_w2c ⊔ step_c2n
+
+def Step' : Transition Conf :=
   step_n2w ⊔ step_w2c ⊔ step_c2n ⊔ step_join ⊔ step_exit
 
 #print_steps Step
@@ -74,7 +76,6 @@ def Step : Transition Conf :=
 --   step_c2n
 --   step_join
 --   step_exit
-
 
 def init : Pattern Conf := fun cf =>
   ∃ (i : Nat) (S : Multiset Nat),
@@ -117,7 +118,82 @@ def inv := pat1 ⊔ pat2
 #check (pat1 ⊔ pat2 : Pattern Conf) -- Conf → Prop
 
 
-lemma inv_ind : (↑Step : Transformer Conf) (pat1 ⊔ pat2) (pat1 ⊔ pat2) := sorry
+lemma _1a1 : (↑step_n2w : Transformer Conf) pat1 pat1 := by
+  intro s s' ps step
+
+  simp [pat1] at ps
+  obtain ⟨N, Q, rfl, h_s1, h_s2⟩ := ps
+
+  rcases step with ⟨i, N', W', C', Q'⟩
+
+  simp [pat1]
+  refine ⟨?_, ?_, ?_⟩
+
+  · sorry
+  · sorry
+  · sorry
+lemma _1b2 : (↑step_w2c : Transformer Conf) pat1 pat2 := sorry
+lemma _1c0 : (↑step_c2n : Transformer Conf) pat1 ⊥ := sorry
+lemma _2a2 : (↑step_n2w : Transformer Conf) pat2 pat2 := sorry
+lemma _2b0 : (↑step_w2c : Transformer Conf) pat2 ⊥ := sorry
+lemma _2c1 : (↑step_c2n : Transformer Conf) pat2 pat1 := sorry
+
+lemma _1a12 : (↑step_n2w : Transformer Conf) pat1 (pat1 ⊔ pat2) := by
+  apply RComp' (p' := pat1)
+  · apply _1a1
+  · apply le_sup_left
+
+lemma _1b12 : (↑step_w2c : Transformer Conf) pat1 (pat1 ⊔ pat2) := by
+  apply RComp' (p' := pat2)
+  · apply _1b2
+  · apply le_sup_right
+
+lemma _1c12 : (↑step_c2n : Transformer Conf) pat1 (pat1 ⊔ pat2) := by
+  apply RComp' (p' := ⊥)
+  · apply _1c0
+  · apply bot_le
+
+lemma _2a12 : (↑step_n2w : Transformer Conf) pat2 (pat1 ⊔ pat2) := by
+  apply RComp' (p' := pat2)
+  · apply _2a2
+  · apply le_sup_right
+
+lemma _2b12 : (↑step_w2c : Transformer Conf) pat2 (pat1 ⊔ pat2) := by
+  apply RComp' (p' := ⊥)
+  · apply _2b0
+  · apply bot_le
+
+lemma _2c12 : (↑step_c2n : Transformer Conf) pat2 (pat1 ⊔ pat2) := by
+  apply RComp' (p' := pat1)
+  · apply _2c1
+  · apply le_sup_left
+
+-- step_n2w ⊔ step_w2c ⊔ step_c2n
+lemma _1abc12 : (↑Step : Transformer Conf) pat1 (pat1 ⊔ pat2) := by
+  unfold Step -- [Step]
+  rw [SComp (t1 := step_n2w ⊔ step_w2c)]
+  rw [SComp (t1 := step_n2w)]
+  refine ⟨⟨?_,?_⟩,?_⟩ -- fixme: ⊔ is left-associative unlike ∧
+  · apply _1a12
+  · apply _1b12
+  · apply _1c12
+
+lemma _2abc12 : (↑Step : Transformer Conf) pat2 (pat1 ⊔ pat2) := by
+  unfold Step -- [Step]
+  rw [SComp (t1 := step_n2w ⊔ step_w2c)]
+  rw [SComp (t1 := step_n2w)]
+  refine ⟨⟨?_,?_⟩,?_⟩ -- fixme: ⊔ is left-associative unlike ∧
+  · apply _2a12
+  · apply _2b12
+  · apply _2c12
+
+lemma _12abc12 : (↑Step : Transformer Conf) (pat1 ⊔ pat2) (pat1 ⊔ pat2) := by
+  rw [LComp]; refine ⟨?_,?_⟩
+  · apply _1abc12
+  · apply _2abc12
+
+
+def inv_ind : (↑Step : Transformer Conf) (pat1 ⊔ pat2) (pat1 ⊔ pat2) := _12abc12
 /-
 1a1: pat1 --(n2w)--> pat1
 1b2: pat1 --(w2c)--> pat2

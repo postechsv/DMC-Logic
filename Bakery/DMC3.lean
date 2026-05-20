@@ -1,5 +1,6 @@
 --import Mathlib.Logic.Relation
 import Mathlib.Order.Lattice
+import Mathlib.Order.BoundedOrder.Basic
 
 universe u
 
@@ -16,6 +17,10 @@ class State (α : Type u) where
 
 abbrev Pattern (α : Type u) [State α] := α → Prop
 
+-- ⊥ for Patterns
+instance {α : Type u} [State α] : Bot (Pattern α) where
+  bot := fun _ => False
+
 -- ⊔ for Patterns
 instance {α : Type u} [State α] : Max (Pattern α) where
   max p1 p2 := fun st => p1 st ∨ p2 st
@@ -24,6 +29,46 @@ instance {α : Type u} [State α] : Max (Pattern α) where
 instance {α : Type u} [State α] : Coe α (Pattern α) where
   coe st := fun st' => st' = st
 
+-- ≤ for Patterns
+instance {α : Type u} [State α] : LE (Pattern α) where
+  le p1 p2 := ∀ st, p1 st → p2 st
+
+instance {α : Type u} [State α] : SemilatticeSup (Pattern α) where
+  sup := max
+  le := (· ≤ ·)
+
+  le_refl := by
+    intro p st hp
+    exact hp
+  le_trans := by
+    intro p q r hpq hqr st hp
+    exact hqr st (hpq st hp)
+  le_antisymm := by
+    intro p q hpq hqp
+    funext st
+    apply propext
+    constructor
+    · intro hp
+      exact hpq st hp
+    · intro hq
+      exact hqp st hq
+  le_sup_left := by
+    intro p q st hp
+    exact Or.inl hp
+  le_sup_right := by
+    intro p q st hq
+    exact Or.inr hq
+  sup_le := by
+    intro p q r hpr hqr st hpq
+    cases hpq with
+    | inl hp => exact hpr st hp
+    | inr hq => exact hqr st hq
+
+instance {α : Type u} [State α] : OrderBot (Pattern α) where
+  bot := ⊥
+  bot_le := by
+    intro pat st h_bot
+    contradiction
 
 /-
   **Transition α** : α → α → Prop
