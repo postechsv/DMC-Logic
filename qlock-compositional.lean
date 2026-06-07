@@ -118,22 +118,33 @@ def inv := pat1 ⊔ pat2
 #check (pat1 ⊔ pat2 : Pattern Conf) -- Conf → Prop
 
 
+-- ∀ st st', pat1 st → step_n2w st st' → pat1 st'
 lemma _1a1 : (↑step_n2w : Transformer Conf) pat1 pat1 := by
   intro s s' ps step
-
   simp [pat1] at ps
-  obtain ⟨N, Q, rfl, h_s1, h_s2⟩ := ps
+  obtain ⟨N, Q, h_unify, h_s1, h_s2⟩ := ps
 
-  rcases step with ⟨i, N', W', C', Q'⟩
-
+  cases step
+  --rcases step with ⟨i, N', W', C', Q'⟩
   simp [pat1]
   refine ⟨?_, ?_, ?_⟩
 
   · sorry
   · sorry
   · sorry
+
 lemma _1b2 : (↑step_w2c : Transformer Conf) pat1 pat2 := sorry
-lemma _1c0 : (↑step_c2n : Transformer Conf) pat1 ⊥ := sorry
+
+-- ∀ st st', pat1 st → step_c2n st st' → ⊥ st'
+lemma _1c0 : (↑step_c2n : Transformer Conf) pat1 ⊥ := by
+  intro s s' h_s step
+  simp [pat1] at h_s
+  obtain ⟨N, Q, h_unify, h_s1, h_s2⟩ := h_s
+
+  cases step
+  injection h_unify with _ _ hc _ -- hc : i✝ ::ₘ c✝ = 0
+  simp at hc
+
 lemma _2a2 : (↑step_n2w : Transformer Conf) pat2 pat2 := sorry
 lemma _2b0 : (↑step_w2c : Transformer Conf) pat2 ⊥ := sorry
 lemma _2c1 : (↑step_c2n : Transformer Conf) pat2 pat1 := sorry
