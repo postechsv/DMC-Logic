@@ -10,79 +10,6 @@ import Qq
 
 open Lean Meta Elab Tactic
 
-
-
-structure Conf where
-  n : Multiset Nat
-  w : Multiset Nat
-  c : Multiset Nat
-  q : List Nat
-
-structure Conf' where
-  n : Multiset Nat
-  w : Multiset Nat
-  q : List Nat
-  c : Multiset Nat
-
-instance : State Conf := ⟨⟩
-instance : State Conf' := ⟨⟩
-
-inductive step_n2w : Transition Conf where
-  | mk : ∀ (i : Nat) (n w c : Multiset Nat) (q : List Nat),
-      step_n2w ⟨ i ::ₘ n, w, c, q ⟩ ⟨ n, i ::ₘ w, c, q ++ [i] ⟩
-
-inductive step_w2c : Transition Conf where
-  | mk : ∀ (i : Nat) (n w c : Multiset Nat) (q : List Nat),
-      step_w2c ⟨ n, i ::ₘ w, c, i :: q ⟩ ⟨ n, w, i ::ₘ c, i :: q ⟩
-
-inductive step_c2n : Transition Conf where
-  | mk : ∀ (i : Nat) (n w c : Multiset Nat) (q : List Nat),
-      step_c2n ⟨ n, w, i ::ₘ c, i :: q ⟩ ⟨ i ::ₘ n, w, c, q ⟩
-
-inductive step_c2n' : Transition Conf' where
-  | mk : ∀ (i : Nat) (n w c : Multiset Nat) (q : List Nat),
-      step_c2n' ⟨ n, w, i :: q, i ::ₘ c ⟩ ⟨ i ::ₘ n, w, q, c ⟩
-
-
-
-
-/- pat1
-  (< U:MSet | W:MSet | mt | Q:List >) s.t.
-    (non-mt(U:MSet W:MSet) = tt)
-    /\ (set(U:MSet W:MSet) = tt)
-    /\ (l2ms(Q:List) = W:MSet))
--/
-def pat1 : Pattern Conf := fun cf =>
-  ∃ (U W : Multiset Nat) (Q : List Nat),
-    cf = ⟨ U, W, ∅, Q ⟩
-    ∧ U + W ≠ ∅
-    ∧ Multiset.Nodup (U + W)
-    ∧ ↑Q = W
-
-def pat1' : Pattern Conf' := fun cf =>
-  ∃ (U W : Multiset Nat) (Q : List Nat),
-    cf = ⟨ U, W, Q, ∅ ⟩
-    ∧ U + W ≠ ∅
-    ∧ Multiset.Nodup (U + W)
-    ∧ ↑Q = W
-
-/- pred2
-  (< V:MSet | T:MSet | i:Nat | i:Nat ; Q':List >) s.t.
-    (non-mt(V:MSet T:MSet i:Nat) = tt)
-    /\ (set(V:MSet T:MSet i:Nat) = tt)
-    /\ (l2ms(i:Nat ; Q':List) = T:MSet i:Nat))
--/
-def pat2 : Pattern Conf := fun cf =>
-  ∃ (i : Nat) (V T : Multiset Nat) (Q' : List Nat),
-    cf = ⟨ V, T, {i}, i :: Q' ⟩
-    ∧ V + T + {i} ≠ ∅
-    ∧ Multiset.Nodup (V + T + {i})
-    ∧ ↑(i :: Q') = i ::ₘ T
-
-
-
-
-
 -- attempt 1: hardcoded version for _1c0
 -- macro "destruct_step" step:ident unify:ident : tactic => `(tactic|
 --   (cases $step:ident
@@ -106,8 +33,92 @@ macro "destruct_step " step:ident unify:ident : tactic =>
     done
   })
 
+
+/- EXAMPLE 1 -/
+namespace ex1
+
+structure Conf where
+  n : Multiset Nat
+  w : Multiset Nat
+  c : Multiset Nat
+  q : List Nat
+instance : State Conf := ⟨⟩
+
+inductive step_c2n : Transition Conf where
+  | mk : ∀ (i : Nat) (n w c : Multiset Nat) (q : List Nat),
+      step_c2n ⟨ n, w, i ::ₘ c, i :: q ⟩ ⟨ i ::ₘ n, w, c, q ⟩
+
+def pat1 : Pattern Conf := fun cf =>
+  ∃ (U W : Multiset Nat) (Q : List Nat),
+    cf = ⟨ U, W, ∅, Q ⟩
+    ∧ U + W ≠ ∅
+    ∧ Multiset.Nodup (U + W)
+    ∧ ↑Q = W
+
 -- ∀ st st', pat1 st → step_c2n st st' → ⊥ st'
 lemma _1c0 : (↑step_c2n : Transformer Conf) pat1 ⊥ := by
+  intro s s' h_s step
+  simp [pat1] at h_s
+  obtain ⟨N, Q, h_unify, h_s1, h_s2⟩ := h_s
+  destruct_step step h_unify
+
+end ex1
+
+
+/- EXAMPLE 2 -/
+namespace ex2
+
+structure Conf where
+  n : Multiset Nat
+  w : Multiset Nat
+  q : List Nat /- CHANGE: q comes before c -/
+  c : Multiset Nat
+instance : State Conf := ⟨⟩
+
+inductive step_c2n : Transition Conf where
+  | mk : ∀ (i : Nat) (n w c : Multiset Nat) (q : List Nat),
+      step_c2n ⟨ n, w, i :: q, i ::ₘ c ⟩ ⟨ i ::ₘ n, w, q, c ⟩
+
+def pat1 : Pattern Conf := fun cf =>
+  ∃ (U W : Multiset Nat) (Q : List Nat),
+    cf = ⟨ U, W, Q, ∅ ⟩
+    ∧ U + W ≠ ∅
+    ∧ Multiset.Nodup (U + W)
+    ∧ ↑Q = W
+
+lemma _1c0 : (↑step_c2n : Transformer Conf) pat1 ⊥ := by
+  intro s s' h_s step
+  simp [pat1] at h_s
+  obtain ⟨N, Q, h_unify, h_s1, h_s2⟩ := h_s
+  destruct_step step h_unify /- destruct_step still applies despite the change! -/
+
+end ex2
+
+
+
+
+
+/- pred2
+  (< V:MSet | T:MSet | i:Nat | i:Nat ; Q':List >) s.t.
+    (non-mt(V:MSet T:MSet i:Nat) = tt)
+    /\ (set(V:MSet T:MSet i:Nat) = tt)
+    /\ (l2ms(i:Nat ; Q':List) = T:MSet i:Nat))
+-/
+def pat2 : Pattern Conf := fun cf =>
+  ∃ (i : Nat) (V T : Multiset Nat) (Q' : List Nat),
+    cf = ⟨ V, T, {i}, i :: Q' ⟩
+    ∧ V + T + {i} ≠ ∅
+    ∧ Multiset.Nodup (V + T + {i})
+    ∧ ↑(i :: Q') = i ::ₘ T
+
+
+
+
+
+
+
+-- ∀ st st', pat1 st → step_c2n st st' → ⊥ st'
+example : (↑step_c2n : Transformer Conf) pat1 ⊥ := by
   intro s s' h_s step
   simp [pat1] at h_s
   obtain ⟨N, Q, h_unify, h_s1, h_s2⟩ := h_s
@@ -123,15 +134,26 @@ lemma _1c0 : (↑step_c2n : Transformer Conf) pat1 ⊥ := by
   -- simp at hc -- contradiction found: 0 cannot be of the form i✝ ::ₘ c✝
 
 
--- variant of _1c0 for Conf'
-lemma _1c0' : (↑step_c2n' : Transformer Conf') pat1' ⊥ := by
-  intro s s' h_s step
-  simp [pat1'] at h_s
-  obtain ⟨N, Q, h_unify, h_s1, h_s2⟩ := h_s
-  destruct_step step h_unify
 
 
 
+
+
+
+
+
+
+
+
+
+
+inductive step_n2w : Transition Conf where
+  | mk : ∀ (i : Nat) (n w c : Multiset Nat) (q : List Nat),
+      step_n2w ⟨ i ::ₘ n, w, c, q ⟩ ⟨ n, i ::ₘ w, c, q ++ [i] ⟩
+
+inductive step_w2c : Transition Conf where
+  | mk : ∀ (i : Nat) (n w c : Multiset Nat) (q : List Nat),
+      step_w2c ⟨ n, i ::ₘ w, c, i :: q ⟩ ⟨ n, w, i ::ₘ c, i :: q ⟩
 
 -- ∀ st st', pat1 st → step_n2w st st' → pat1 st'
 lemma _1a1 : (↑step_n2w : Transformer Conf) pat1 pat1 := by
