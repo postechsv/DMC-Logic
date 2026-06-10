@@ -77,23 +77,18 @@ lemma _1a1 : (↑step_n2w : Transformer Conf) pat1 pat1 := by
   refine ⟨⟨?_, ?_⟩, ?_, ?_⟩
 
   · -- {i} + w = ↑(q ++ [i])
-    calc {i} + w
-      _ = {i} + ↑q    := by rw [h_w, h_q]
-      _ = ↑[i] + ↑q   := by rfl                -- {i} and ↑[i] are definitionally identical
-      _ = ↑q + ↑[i]   := by rw [Multiset.add_comm]      -- Pure abelian commutativity
-      _ = ↑(q ++ [i]) := by rw [← Multiset.coe_add]
+    change {i} + w = ↑q + {i}
+    rw [h_w, h_q, Multiset.add_comm ↑Q {i}]
   · -- c = 0
     assumption
   · -- ¬n + ↑(q ++ [i]) = 0
     -- observation: h_s1 and current goal matches up to h_n & h_q
     -- idea: using Maude as a quick hint oracle?
+    rw [← Multiset.coe_add]; change ¬n + (↑q + {i}) = 0
     intro h_contra
     apply h_s1
-    calc N + ↑Q
-      _ = ({i} + n) + ↑q    := by rw [← h_n, ← h_q]
-      _ = n + (↑q + ↑[i])   := by rw [Multiset.add_comm {i} n, Multiset.add_assoc, Multiset.add_comm {i} ↑q]; rfl
-      _ = n + ↑(q ++ [i])   := by rw [← Multiset.coe_add]
-      _ = 0                 := h_contra
+    rw [← h_n, ← h_q, Multiset.add_comm {i} n, Multiset.add_assoc, Multiset.add_comm {i} ↑q]
+    assumption
   · -- (n + ↑(q ++ [i])).Nodup
     -- observation: h_s2 and current goal matches up to h_n & h_q
     -- idea: using Maude as a quick hint oracle?
