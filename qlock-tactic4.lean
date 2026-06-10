@@ -84,7 +84,7 @@ lemma _1a1 : (↑step_n2w : Transformer Conf) pat1 pat1 := by
   · -- ¬n + ↑(q ++ [i]) = 0
     -- observation: h_s1 and current goal matches up to h_n & h_q
     -- idea: using Maude as a quick hint oracle?
-    rw [← Multiset.coe_add]; change ¬n + (↑q + {i}) = 0
+    change ¬n + (↑q + {i}) = 0
     intro h_contra
     apply h_s1
     rw [← h_n, ← h_q, Multiset.add_comm {i} n, Multiset.add_assoc, Multiset.add_comm {i} ↑q]
