@@ -91,6 +91,7 @@ instance {N N' W' C' : Multiset ℕ} {Q Q' : List ℕ} {i : Nat} :
     exact ⟨hn, hw, hc, hq⟩
 
 
+
 -- ∀ st st', pat1 st → step_n2w st st' → pat1 st'
 lemma _1a1 : (↑step_n2w : Transformer Conf) pat1 pat1 := by
   -- boilerplate: unpacking the pattern and the step
@@ -102,12 +103,46 @@ lemma _1a1 : (↑step_n2w : Transformer Conf) pat1 pat1 := by
   -- { n := i✝ ::ₘ n✝, w := w✝, c := c✝, q := q✝ } = { n := N, w := ↑Q, c := 0, q := Q }
   obtain unifier := Unify.resolve h_unify
 
-  /- unifier exists, so continue the proof with bindings added to hypothesis -/
-  simp [pat1]
-  refine ⟨?_, ?_, ?_⟩
+  /- unifier exists, so unpack the bindings -/
+  obtain ⟨h_n, h_w, h_c, h_q⟩ := unifier
 
-  · sorry
-  · sorry
-  · sorry
+  /- rest of the proof: constraint solving w.r.t. unifier -/
+  rename_i i n w c q
+  simp [pat1]
+  refine ⟨⟨?_, ?_⟩, ?_, ?_⟩
+
+  · -- i ::ₘ w = ↑(q ++ [i])
+    simp [h_w, h_q]
+    exact (List.perm_append_singleton _ Q).symm
+  · -- c = 0
+    assumption
+  · -- ¬n + ↑(q ++ [i]) = 0
+    intro h_contra
+    apply h_s1
+    calc N + ↑Q
+        = (i ::ₘ n) + ↑q                    := by rw [← h_n, ← h_q]
+      _ = ({i} + n) + ↑q                    := by rw [← Multiset.singleton_add]
+      _ = n + {i} + ↑q                      := by rw [Multiset.add_comm {i}, Multiset.add_assoc]
+      _ = n + ({i} + ↑q)                    := by rw [← Multiset.add_assoc]
+      _ = n + ↑([i] ++ q)                   := by rw [← Multiset.coe_add]; rfl
+      _ = n + ↑(q ++ [i])                   := by
+        apply congr_arg (fun x => n + x)
+        rw [Multiset.coe_eq_coe]
+        exact (List.perm_append_singleton i q).symm
+      _ = 0                                     := h_contra
+  · -- (n + ↑(q ++ [i])).Nodup
+    have h_eq : N + ↑Q = n + ↑(q ++ [i]) := by
+      calc N + ↑Q
+        _ = (i ::ₘ n) + ↑q      := by rw [← h_n, ← h_q]
+        _ = ({i} + n) + ↑q      := by rw [← Multiset.singleton_add]
+        _ = (n + {i}) + ↑q      := by rw [Multiset.add_comm {i} n]
+        _ = n + ({i} + ↑q)      := by rw [Multiset.add_assoc]
+        _ = n + ↑([i] ++ q)     := by rw [← Multiset.coe_add]; rfl
+        _ = n + ↑(q ++ [i])     := by
+          apply congr_arg (fun x => n + x)
+          rw [Multiset.coe_eq_coe]
+          exact (List.perm_append_singleton i q).symm
+    rw [h_eq] at h_s2
+    exact h_s2
 
 end ex1
