@@ -103,3 +103,54 @@ lemma _1a1 : (↑step_n2w : Transformer Conf) pat1 pat1 := by
     exact h_s2
 
 end ex1
+
+
+
+
+
+
+
+
+lemma completeness_ex1 (X Y : Multiset ℕ) :
+  (X + Y = {1} + {2}) →
+  (
+    (X = {1} + {2} ∧ Y = ∅) ∨
+    (X = {1} ∧ Y = {2}) ∨
+    (X = {2} ∧ Y = {1}) ∨
+    (X = ∅ ∧ Y = {1} + {2})
+  ) := by
+  intro h
+
+  -- Isolate finite elements to bypass universal quantifier blockage
+  have c1 : X.count 1 + Y.count 1 = 1 := by
+    have := congr_arg (Multiset.count 1) h
+    simp only [Multiset.count_add, Multiset.count_singleton, if_pos] at this
+    exact this
+
+  have c2 : X.count 2 + Y.count 2 = 1 := by
+    have := congr_arg (Multiset.count 2) h
+    simp only [Multiset.count_add, Multiset.count_singleton, if_pos] at this
+    exact this
+
+  have c_other : ∀ a, a ≠ 1 → a ≠ 2 → X.count a = 0 ∧ Y.count a = 0 := by
+    intro a ha1 ha2
+    have := congr_arg (Multiset.count a) h
+    simp only [Multiset.count_add, Multiset.count_singleton, if_neg ha1, if_neg ha2] at this
+    omega
+
+  -- Case-split the quantified-free integer equations
+  rcases Nat.add_eq_one_iff.mp c1 with ⟨hx1, hy1⟩ | ⟨hx1, hy1⟩ <;>
+  rcases Nat.add_eq_one_iff.mp c2 with ⟨hx2, hy2⟩ | ⟨hx2, hy2⟩
+
+  · right; right; right
+    constructor <;> ext a <;> by_cases h1 : a = 1 <;> by_cases h2 : a = 2 <;>
+    simp_all
+  · right; right; left
+    constructor <;> ext a <;> by_cases h1 : a = 1 <;> by_cases h2 : a = 2 <;>
+    simp_all
+  · right; left
+    constructor <;> ext a <;> by_cases h1 : a = 1 <;> by_cases h2 : a = 2 <;>
+    simp_all
+  · left
+    constructor <;> ext a <;> by_cases h1 : a = 1 <;> by_cases h2 : a = 2 <;>
+    simp_all
