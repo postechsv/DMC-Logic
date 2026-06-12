@@ -9,6 +9,7 @@ import Bakery.command
 import Mathlib.Data.Multiset.Basic
 import Mathlib.Data.Multiset.AddSub
 
+import Mathlib.Tactic.IntervalCases
 
 
 /- EXAMPLE 1 -/
@@ -106,12 +107,77 @@ end ex1
 
 
 
+-- MACRO 1: Support Unfolding (Internal Helper)
+syntax "unfold_support " ident "[" term,* "]" : tactic
+macro_rules
+  | `(tactic| unfold_support $id [ $e ]) => `(tactic|
+      by_cases $id = $e <;> simp_all)
+  | `(tactic| unfold_support $id [ $e, $es,* ]) => `(tactic|
+      by_cases $id = $e <;> simp_all <;> unfold_support $id [ $es,* ])
 
+-- MACRO 2: The Backtracking Router (Internal Helper)
+syntax "route_and_solve " ident "[" term,* "]" : tactic
+macro_rules
+  | `(tactic| route_and_solve $id [ $es,* ]) => `(tactic|
+      first
+        -- Try the left branch, fully solve it, and ensure no goals remain
+        | (left; constructor <;> ext $id <;> unfold_support $id [ $es,* ] <;> done)
+        -- If left fails, go right and recurse down the Or-tree
+        | (right; route_and_solve $id [ $es,* ])
+        -- Fallback for the final node (which is no longer an 'Or')
+        | (constructor <;> ext $id <;> unfold_support $id [ $es,* ] <;> done)
+    )
+
+-- MACRO 3: The Public Unhygienic Combinator
+-- Injects the raw 'a' and kicks off the backtracking search.
+macro "solve_acu_branch " "[" es:term,* "]" : tactic => do
+  let a := Lean.mkIdent `a
+  `(tactic| route_and_solve $a [ $es,* ])
 
 
 
 
 lemma completeness_ex1 (X Y : Multiset ℕ) :
+  (X + Y = {1} + {2}) →
+  (
+    (X = {1} + {2} ∧ Y = ∅) ∨
+    (X = {1} ∧ Y = {2}) ∨
+    (X = {2} ∧ Y = {1}) ∨
+    (X = ∅ ∧ Y = {1} + {2})
+  ) := by
+  intro h
+
+  -- Isolate finite elements to bypass universal quantifier blockage
+  have c1 : X.count 1 + Y.count 1 = 1 := by
+    have := congr_arg (Multiset.count 1) h
+    simp only [Multiset.count_add, Multiset.count_singleton, if_pos] at this
+    exact this
+
+  have c2 : X.count 2 + Y.count 2 = 1 := by
+    have := congr_arg (Multiset.count 2) h
+    simp only [Multiset.count_add, Multiset.count_singleton, if_pos] at this
+    exact this
+
+  have c_other : ∀ a, a ≠ 1 → a ≠ 2 → X.count a = 0 ∧ Y.count a = 0 := by
+    intro a ha1 ha2
+    have := congr_arg (Multiset.count a) h
+    simp only [Multiset.count_add, Multiset.count_singleton, if_neg ha1, if_neg ha2] at this
+    omega
+
+
+  -- 2. Generic Integer Bounding
+  -- Maude generates bounds for ONE of the variables (e.g., X) based on the RHS counts.
+  have b1 : X.count 1 ≤ 1 := by omega
+  have b2 : X.count 2 ≤ 1 := by omega
+
+  -- 3. The Automated Terminal Block
+  -- interval_cases splits the variables across all valid Diophantine integer states.
+  interval_cases h1 : X.count 1 <;>
+  interval_cases h2 : X.count 2 <;>
+  solve_acu_branch [1, 2]
+
+
+lemma completeness_ex1' (X Y : Multiset ℕ) :
   (X + Y = {1} + {2}) →
   (
     (X = {1} + {2} ∧ Y = ∅) ∨
