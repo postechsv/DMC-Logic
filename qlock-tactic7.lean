@@ -41,15 +41,6 @@ def getMaudeUnifiers (filename : String) (query : String) : IO (List String) := 
 
 syntax "#test_maude_unify " str " with " str : command
 
-def query1 := "variant unify {3} =? {1} + {2} ."
-def query2 := "variant unify X:MSet + Y:MSet =? {1} + {2} ."
-def query3 := "variant unify X:MSet + X:MSet =? A:MSet + B:MSet ."
-
--- #eval do getMaudeUnifiers "theory/multiset.maude" query1
--- #eval do getMaudeUnifiers "theory/multiset.maude" query2
--- #eval do getMaudeUnifiers "theory/multiset.maude" query3
-
-
 
 
 
@@ -163,21 +154,109 @@ elab_rules : term
       | .ok stx =>
           elabTerm stx (some (mkSort levelZero))
 
--- def query1 := "variant unify {3} =? {1} + {2} ."
--- def query2 := "variant unify X:MSet + Y:MSet =? {1} + {2} ."
--- def query3 := "variant unify X:MSet + X:MSet =? A:MSet + B:MSet ."
+def query1 := "variant unify {3} =? {1} + {2} ."
+def query2 := "variant unify X:MSet + Y:MSet =? {1} + {2} ."
+def query3 := "variant unify X:MSet + X:MSet =? A:MSet + B:MSet ."
+def query4 := "variant unify X:MSet + Y:MSet + {2} =? {1} + Z:MSet ."
 
-example :
-    ({3} : Multiset Nat) = {1} + {2} →
-    maude_unifiers_prop_from("theory/multiset.maude", query1) := by
-  sorry
 
-example (X Y : Multiset Nat) :
-    X + Y = {1} + {2} →
-    maude_unifiers_prop_from("theory/multiset.maude", query2) := by
-  sorry
+-- #eval do getMaudeUnifiers "theory/multiset.maude" query1
+-- #eval do getMaudeUnifiers "theory/multiset.maude" query2
+-- #eval do getMaudeUnifiers "theory/multiset.maude" query3
+#eval do getMaudeUnifiers "theory/multiset.maude" query4
 
-example (X Y A B : Multiset Nat) :
-    X + Y = A + B →
-    maude_unifiers_prop_from("theory/multiset.maude", query3) := by
-  sorry
+-- example :
+--     ({3} : Multiset Nat) = {1} + {2} →
+--     maude_unifiers_prop_from("theory/multiset.maude", query1) := by
+--   sorry
+
+-- example (X Y : Multiset Nat) :
+--     X + Y = {1} + {2} →
+--     maude_unifiers_prop_from("theory/multiset.maude", query2) := by
+--   sorry
+
+-- example (X Y A B : Multiset Nat) :
+--     X + Y = A + B →
+--     maude_unifiers_prop_from("theory/multiset.maude", query3) := by
+--   sorry
+
+-- proof-by-chatgpt
+example (X Y Z : Multiset Nat) :
+    X + Y + {2} = {1} + Z →
+    maude_unifiers_prop_from("theory/multiset.maude", query4) := by
+  intro h
+
+  have hc :
+      ∀ a : ℕ,
+        X.count a + Y.count a + (if a = 2 then 1 else 0)
+          =
+        (if a = 1 then 1 else 0) + Z.count a := by
+    intro a
+    have hcnt := congr_arg (fun M : Multiset ℕ => M.count a) h
+    simp [Multiset.count_add, Multiset.count_singleton, Multiset.count_cons] at hcnt
+    omega
+
+  by_cases hx : 1 ∈ X
+
+  · left
+
+    have hxpos : 0 < X.count 1 := by
+      exact Multiset.count_pos.mpr hx
+
+    refine ⟨X.erase 1, Y, ?_, rfl, ?_⟩
+
+    · ext a
+      by_cases ha : a = 1
+      · subst a
+        simp [Multiset.count_add, Multiset.count_singleton, hxpos]
+        omega
+      · simp [Multiset.count_add, Multiset.count_singleton, ha]
+
+    · ext a
+      have hca := hc a
+      by_cases ha1 : a = 1
+      · subst a
+        simp [Multiset.count_add, Multiset.count_singleton, hxpos] at hca ⊢
+        omega
+      · by_cases ha2 : a = 2
+        · subst a
+          have h21 : (2 : ℕ) ≠ 1 := by decide
+          simp [Multiset.count_add, Multiset.count_singleton, h21] at hca ⊢
+          omega
+        · simp [Multiset.count_add, Multiset.count_singleton, ha1, ha2] at hca ⊢
+          omega
+
+  · right
+
+    have hx0 : X.count 1 = 0 := by
+      apply Nat.eq_zero_of_not_pos
+      intro hxpos
+      exact hx (Multiset.count_pos.mp hxpos)
+
+    have hypos : 0 < Y.count 1 := by
+      have hca := hc 1
+      simp [Multiset.count_add, Multiset.count_singleton, hx0] at hca
+      omega
+
+    refine ⟨X, Y.erase 1, rfl, ?_, ?_⟩
+
+    · ext a
+      by_cases ha : a = 1
+      · subst a
+        simp [Multiset.count_add, Multiset.count_singleton, hypos]
+        omega
+      · simp [Multiset.count_add, Multiset.count_singleton, ha]
+
+    · ext a
+      have hca := hc a
+      by_cases ha1 : a = 1
+      · subst a
+        simp [Multiset.count_add, Multiset.count_singleton, hx0, hypos] at hca ⊢
+        omega
+      · by_cases ha2 : a = 2
+        · subst a
+          have h21 : (2 : ℕ) ≠ 1 := by decide
+          simp [Multiset.count_add, Multiset.count_singleton, h21] at hca ⊢
+          omega
+        · simp [Multiset.count_add, Multiset.count_singleton, ha1, ha2] at hca ⊢
+          omega
