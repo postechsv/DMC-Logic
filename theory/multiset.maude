@@ -1,0 +1,10 @@
+fmod ACU-MSET is
+  inc NAT .
+  sort MSet .
+  op mt : -> MSet .
+  op {_} : Nat -> MSet .
+  ---op 1 : -> MSet .
+  ---op 2 : -> MSet .
+  
+  op _+_ : MSet MSet -> MSet [assoc comm id: mt] .
+endfm
