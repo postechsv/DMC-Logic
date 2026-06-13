@@ -2,6 +2,8 @@
 Objective: Maude-based certification generation
 -/
 import Lean
+import Mathlib.Data.Multiset.Basic
+import Mathlib.Data.Multiset.AddSub
 
 open Lean Elab Command
 
@@ -39,20 +41,16 @@ def getMaudeUnifiers (filename : String) (query : String) : IO (List String) := 
 
 syntax "#test_maude_unify " str " with " str : command
 
-elab_rules : command
-  | `(#test_maude_unify $filename:str with $query:str) => do
-      let stdout ← liftIO <|
-        getMaudeUnifiers filename.getString query.getString
-      logInfo m!"Maude unifiers:\n{stdout}"
+def query1 := "variant unify {3} =? {1} + {2} ."
+def query2 := "variant unify X:MSet + Y:MSet =? {1} + {2} ."
+def query3 := "variant unify X:MSet + X:MSet =? A:MSet + B:MSet ."
 
-#test_maude_unify "theory/multiset.maude" with
-  "variant unify {3} =? {1} + {2} ."
+-- #eval do getMaudeUnifiers "theory/multiset.maude" query1
+-- #eval do getMaudeUnifiers "theory/multiset.maude" query2
+-- #eval do getMaudeUnifiers "theory/multiset.maude" query3
 
-#test_maude_unify "theory/multiset.maude" with
-  "variant unify X:MSet + Y:MSet =? {1} + {2} ."
 
-#test_maude_unify "theory/multiset.maude" with
-  "variant unify X:MSet + X:MSet =? A:MSet + B:MSet ."
+
 
 
 def parseMaudeUnifier (u : String) : String :=
@@ -112,45 +110,74 @@ def parseMaudeUnifier (u : String) : String :=
       maudeAtomToLean lhs ++ " = " ++ maudeTermToLean rhs
 
   let body :=
-    String.intercalate " ∧ " equations
+    match equations with
+    | [] => "True"
+    | es => String.intercalate " ∧ " es
 
   if existVars.isEmpty then
     body
   else
-    "∃ " ++ String.intercalate " " existVars ++ ", " ++ body
-    --"∃ (" ++ String.intercalate " " existVars ++ " : " ++ "Multiset Nat" ++ "), " ++ body
+    "∃ (" ++ String.intercalate " " existVars ++ " : Multiset Nat), " ++ body
 
+def parseMaudeUnifiers (us : List String) : String :=
+  match us.map (fun u => "(" ++ parseMaudeUnifier u ++ ")") with
+  | [] => "False"
+  | branches => String.intercalate " ∨ " branches
 
+-- #eval do IO.println <| parseMaudeUnifiers (← getMaudeUnifiers "theory/multiset.maude" query1)
+-- #eval do IO.println <| parseMaudeUnifiers (← getMaudeUnifiers "theory/multiset.maude" query2)
+-- #eval do IO.println <| parseMaudeUnifiers (← getMaudeUnifiers "theory/multiset.maude" query3)
 
-def getUnifiers
-    (lemmaName : String)
-    (binders : String)
-    (premise : String)
-    (filename : String)
-    (query : String) : IO String := do
-  let us ← getMaudeUnifiers filename query
+open Lean Elab Term Meta
 
-  let conclusion :=
-    match us.map (fun u => "(" ++ parseMaudeUnifier u ++ ")") with
-    | [] => "False"
-    | branches => String.intercalate " ∨ " branches
+private def elabStringValue (stx : Syntax) : TermElabM String := do
+  let e ← elabTerm stx (some (mkConst ``String))
+  Lean.Elab.Term.synthesizeSyntheticMVarsNoPostponing
+  let e ← instantiateMVars e
 
-  pure s!"lemma {lemmaName} {binders} : {premise} → {conclusion} := by\n  sorry"
+  let e ← withTransparency .all <| reduce e
 
-#eval do
-  IO.println <|
-    ← getUnifiers
-      "completeness"
-      "(X A B : Multiset ℕ)"
-      "X + X = A + B"
-      "theory/multiset.maude"
-      "variant unify X:MSet + X:MSet =? A:MSet + B:MSet ."
+  match e with
+  | Expr.lit (Literal.strVal s) => pure s
+  | _ =>
+      throwError "expected a reducible String literal, got:\n{e}"
 
--- #eval getUnifiers "theory/multiset.maude"
---       "variant unify X:MSet + X:MSet =? A:MSet + B:MSet ."
+syntax "maude_unifiers_prop_from" "(" term ", " term ")" : term
 
--- #eval getUnifiers "theory/multiset.maude"
---       "variant unify X:MSet + Y:MSet =? {1} + {2} ."
+elab_rules : term
+  | `(maude_unifiers_prop_from($fileTerm, $queryTerm)) => do
+      let file ← elabStringValue fileTerm
+      let query ← elabStringValue queryTerm
 
--- #eval getUnifiers "theory/multiset.maude"
---       "variant unify {3} =? {1} + {2} ."
+      let us ←
+        MonadLiftT.monadLift
+          (getMaudeUnifiers file query : IO (List String))
+
+      let code := parseMaudeUnifiers us
+      logInfo m!"Generated Maude proposition:\n{code}"
+
+      let env ← getEnv
+      match Parser.runParserCategory env `term code with
+      | .error err =>
+          throwError "failed to parse generated proposition:\n{err}\n\nGenerated code:\n{code}"
+      | .ok stx =>
+          elabTerm stx (some (mkSort levelZero))
+
+-- def query1 := "variant unify {3} =? {1} + {2} ."
+-- def query2 := "variant unify X:MSet + Y:MSet =? {1} + {2} ."
+-- def query3 := "variant unify X:MSet + X:MSet =? A:MSet + B:MSet ."
+
+example :
+    ({3} : Multiset Nat) = {1} + {2} →
+    maude_unifiers_prop_from("theory/multiset.maude", query1) := by
+  sorry
+
+example (X Y : Multiset Nat) :
+    X + Y = {1} + {2} →
+    maude_unifiers_prop_from("theory/multiset.maude", query2) := by
+  sorry
+
+example (X Y A B : Multiset Nat) :
+    X + Y = A + B →
+    maude_unifiers_prop_from("theory/multiset.maude", query3) := by
+  sorry
