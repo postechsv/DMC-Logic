@@ -4,6 +4,8 @@ Objective: Maude-based certification generation
 import Lean
 import Mathlib.Data.Multiset.Basic
 import Mathlib.Data.Multiset.AddSub
+import Bakery.DMC3
+
 
 open Lean Elab Command
 
@@ -181,8 +183,8 @@ def query4 := "variant unify X:MSet + Y:MSet + {2} =? {1} + Z:MSet ."
 --   sorry
 
 -- proof-by-chatgpt
-example (X Y Z : Multiset Nat) :
-    X + Y + {2} = {1} + Z →
+lemma completeness4 (X Y Z : Multiset Nat) :
+    {1} + Z = X + Y + {2}  →
     maude_unifiers_prop_from("theory/multiset.maude", query4) := by
   intro h
 
@@ -260,3 +262,50 @@ example (X Y Z : Multiset Nat) :
           omega
         · simp [Multiset.count_add, Multiset.count_singleton, ha1, ha2] at hca ⊢
           omega
+
+structure Conf where
+  n : Multiset Nat
+instance : State Conf := ⟨⟩
+
+inductive step : Transition Conf where
+  | mk : ∀ (Z : Multiset Nat), step ⟨ {1} + Z ⟩ ⟨ Z ⟩
+
+def pat : Pattern Conf := fun cf =>
+  ∃ (X Y : Multiset Nat), cf = ⟨ X + Y + {2} ⟩
+
+#check completeness4
+-- ⊢ ∀ (X Y Z : Multiset ℕ),
+--   {1} + Z = X + Y + {2} →
+--     (∃ U2 U1, X = U2 + {1} ∧ Y = U1 ∧ Z = U1 + U2 + {2}) ∨ ∃ U1 U2, X = U1 ∧ Y = U2 + {1} ∧ Z = U1 + U2 + {2}
+
+-- ∀ st st', pat st → step st st' → pat st'
+lemma invariant : (↑step : Transformer Conf) pat pat := by
+  intro st st' h_st step
+  simp [pat] at h_st
+  obtain ⟨X, Y, h_unify⟩ := h_st
+  rcases step
+
+  rename_i Z
+  unfold pat
+  have h_unify0 : {1} + Z = X + Y + {2} := by
+    simpa using congrArg (fun c => c.n) h_unify
+
+  /-
+    (INPUT)
+    h_unify0 : {1} + Z = X + Y + {2}
+  -/
+  have mgu := completeness4 X Y Z h_unify0
+  /-
+    (OUTPUT)
+    mgu : (∃ U2 U1, X = U2 + {1} ∧ Y = U1 ∧ Z = U1 + U2 + {2})
+        ∨ (∃ U1 U2, X = U1 ∧ Y = U2 + {1} ∧ Z = U1 + U2 + {2})
+  -/
+
+  rcases mgu with h₁ | h₂
+  · rcases h₁ with ⟨U2, U1, hX, hY, hZ⟩
+    refine ⟨U1, U2, ?_⟩
+    rw [hZ]
+
+  · rcases h₂ with ⟨U1, U2, hX, hY, hZ⟩
+    refine ⟨U1, U2, ?_⟩
+    rw [hZ]
