@@ -20,7 +20,7 @@ def getMaudeUnifiers (filename : String) (query : String) : IO (List String) := 
       args := #[
         "-lc",
         -- $1 is the temporary filename.
-        s!"cat \"$1\" | maude -no-banner {filename}",
+        s!"cat \"$1\" | /home/byhoson/Maude/maude -no-banner {filename}",
         "bash",
         queryPath.toString
       ]
