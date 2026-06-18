@@ -42,6 +42,7 @@ inductive exit2 : Transition Conf where
       exit2 ⟨{c 2 crit} + {s (held 2)} + REST⟩ ⟨{c 2 idle} + {s (free 1)} + REST⟩
 
 
+/- Defining state predicates (Note the allIdle constraint on environment) -/
 def allIdle (ps : Multiset Proc) : Prop := ∀p ∈ ps, ∃ I, p = c I idle
 
 def patFree1 : Pattern Conf := fun cf =>
@@ -56,17 +57,15 @@ def patCrit1 : Pattern Conf := fun cf =>
 def patCrit2 : Pattern Conf := fun cf =>
   ∃ REST, cf = ⟨{s (held 2)} + {c 2 crit} + REST⟩ ∧ allIdle REST
 
--- assume conditions
+
+/- Establishing contract for client 1 -/
 def requires1 := patFree1 ⊔ patCrit1
-def requires2 := patFree2 ⊔ patCrit2
-
--- guarantee conditions
 def ensures1 := patFree2 ⊔ patCrit1
-def ensures2 := patFree1 ⊔ patCrit2
 
-def step1 : Transition Conf := enter1 ⊔ exit1
 lemma contract1_enter : (↑enter1 : Transformer Conf) requires1 ensures1 := by sorry
 lemma contract1_exit : (↑exit1 : Transformer Conf) requires1 ensures1 := by sorry
+
+def step1 : Transition Conf := enter1 ⊔ exit1
 lemma contract1 : (↑step1 : Transformer Conf) requires1 ensures1 := by
   unfold step1
   rw [SComp (t1 := enter1)]
@@ -75,9 +74,15 @@ lemma contract1 : (↑step1 : Transformer Conf) requires1 ensures1 := by
   · apply contract1_exit
 
 
-def step2 : Transition Conf := enter2 ⊔ exit2
+
+/- Establishing contract for client 2 -/
+def requires2 := patFree2 ⊔ patCrit2
+def ensures2 := patFree1 ⊔ patCrit2
+
 lemma contract2_enter : (↑enter2 : Transformer Conf) requires2 ensures2 := by sorry
 lemma contract2_exit : (↑exit2 : Transformer Conf) requires2 ensures2 := by sorry
+
+def step2 : Transition Conf := enter2 ⊔ exit2
 lemma contract2 : (↑step2 : Transformer Conf) requires2 ensures2 := by
   unfold step2
   rw [SComp (t1 := enter2)]
@@ -85,6 +90,9 @@ lemma contract2 : (↑step2 : Transformer Conf) requires2 ensures2 := by
   · apply contract2_enter
   · apply contract2_exit
 
+
+
+/- Compositional Verification using PComp -/
 def Enabled {α : Type*} [State α] (t : Transition α) : Pattern α :=
   fun st => ∃ st', t st st'
 
