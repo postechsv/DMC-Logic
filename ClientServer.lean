@@ -8,7 +8,7 @@ inductive ClientStatus where
   | crit : ClientStatus
 
 inductive ServerStatus where
-  | free : ServerStatus
+  | free : Nat → ServerStatus
   | held : Nat → ServerStatus
 
 inductive Proc where
@@ -21,30 +21,32 @@ instance : State Conf := ⟨⟩
 
 open Conf Proc ServerStatus ClientStatus
 
+-- alternating ticket: free 1 → held 1 → free 2 → held 2 → free 1
+
 inductive enter1 : Transition Conf where
   | mk : ∀ (REST : Multiset Proc),
-      enter1 ⟨{c 1 idle} + {s free} + REST⟩ ⟨{c 1 crit} + {s (held 1)} + REST⟩
+      enter1 ⟨{c 1 idle} + {s (free 1)} + REST⟩ ⟨{c 1 crit} + {s (held 1)} + REST⟩
 
 def enter1_enabled : Pattern Conf := fun cf =>
-  ∃ REST, cf = ⟨{c 1 idle} + {s free} + REST⟩
+  ∃ REST, cf = ⟨{c 1 idle} + {s (free 1)} + REST⟩
 
 inductive enter2 : Transition Conf where
   | mk : ∀ (REST : Multiset Proc),
-      enter2 ⟨{c 2 idle} + {s free} + REST⟩ ⟨{c 2 crit} + {s (held 2)} + REST⟩
+      enter2 ⟨{c 2 idle} + {s (free 2)} + REST⟩ ⟨{c 2 crit} + {s (held 2)} + REST⟩
 
 def enter2_enabled : Pattern Conf := fun cf =>
-  ∃ REST, cf = ⟨{c 2 idle} + {s free} + REST⟩
+  ∃ REST, cf = ⟨{c 2 idle} + {s (free 2)} + REST⟩
 
 inductive exit1 : Transition Conf where
   | mk : ∀ (REST : Multiset Proc),
-      exit1 ⟨{c 1 crit} + {s (held 1)} + REST⟩ ⟨{c 1 idle} + {s free} + REST⟩
+      exit1 ⟨{c 1 crit} + {s (held 1)} + REST⟩ ⟨{c 1 idle} + {s (free 2)} + REST⟩
 
 def exit1_enabled : Pattern Conf := fun cf =>
   ∃ REST, cf = ⟨{c 1 crit} + {s (held 1)} + REST⟩
 
 inductive exit2 : Transition Conf where
   | mk : ∀ (REST : Multiset Proc),
-      exit2 ⟨{c 2 crit} + {s (held 2)} + REST⟩ ⟨{c 2 idle} + {s free} + REST⟩
+      exit2 ⟨{c 2 crit} + {s (held 2)} + REST⟩ ⟨{c 2 idle} + {s (free 1)} + REST⟩
 
 def exit2_enabled : Pattern Conf := fun cf =>
   ∃ REST, cf = ⟨{c 2 crit} + {s (held 2)} + REST⟩
@@ -87,11 +89,12 @@ lemma enabled2_sound :
 
 def allIdle (ps : Multiset Proc) : Prop := ∀p ∈ ps, ∃ I, p = c I idle
 
--- every client is idle
-def patFree : Pattern Conf := fun cf =>
-  ∃ REST, cf = ⟨{s free} + REST⟩ ∧ allIdle REST
+def patFree1 : Pattern Conf := fun cf =>
+  ∃ REST, cf = ⟨{s (free 1)} + REST⟩ ∧ allIdle REST
 
--- all but proc i is idle
+def patFree2 : Pattern Conf := fun cf =>
+  ∃ REST, cf = ⟨{s (free 2)} + REST⟩ ∧ allIdle REST
+
 def patCrit1 : Pattern Conf := fun cf =>
   ∃ REST, cf = ⟨{s (held 1)} + {c 1 crit} + REST⟩ ∧ allIdle REST
 
@@ -99,12 +102,12 @@ def patCrit2 : Pattern Conf := fun cf =>
   ∃ REST, cf = ⟨{s (held 2)} + {c 2 crit} + REST⟩ ∧ allIdle REST
 
 -- assume conditions
-def requires1 := patFree ⊔ patCrit1
-def requires2 := patFree ⊔ patCrit2
+def requires1 := patFree1 ⊔ patCrit1
+def requires2 := patFree2 ⊔ patCrit2
 
 -- guarantee conditions
-def ensures1 := patFree ⊔ patCrit1
-def ensures2 := patFree ⊔ patCrit2
+def ensures1 := patFree2 ⊔ patCrit1
+def ensures2 := patFree1 ⊔ patCrit2
 
 lemma contract1_enter : (↑enter1 : Transformer Conf) requires1 ensures1 := by sorry
 lemma contract1_exit : (↑exit1 : Transformer Conf) requires1 ensures1 := by sorry
