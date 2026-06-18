@@ -1,3 +1,5 @@
+/- Alternating Bakery -/
+
 import Bakery.DMC3
 
 import Mathlib.Data.Multiset.Basic
@@ -27,15 +29,13 @@ inductive enter1 : Transition Conf where
   | mk : ∀ (REST : Multiset Proc),
       enter1 ⟨{c 1 idle} + {s (free 1)} + REST⟩ ⟨{c 1 crit} + {s (held 1)} + REST⟩
 
+inductive exit1 : Transition Conf where
+  | mk : ∀ (REST : Multiset Proc),
+      exit1 ⟨{c 1 crit} + {s (held 1)} + REST⟩ ⟨{c 1 idle} + {s (free 2)} + REST⟩
 
 inductive enter2 : Transition Conf where
   | mk : ∀ (REST : Multiset Proc),
       enter2 ⟨{c 2 idle} + {s (free 2)} + REST⟩ ⟨{c 2 crit} + {s (held 2)} + REST⟩
-
-
-inductive exit1 : Transition Conf where
-  | mk : ∀ (REST : Multiset Proc),
-      exit1 ⟨{c 1 crit} + {s (held 1)} + REST⟩ ⟨{c 1 idle} + {s (free 2)} + REST⟩
 
 inductive exit2 : Transition Conf where
   | mk : ∀ (REST : Multiset Proc),
@@ -96,24 +96,35 @@ lemma contract2 : (↑step2 : Transformer Conf) requires2 ensures2 := by
 def Enabled {α : Type*} [State α] (t : Transition α) : Pattern α :=
   fun st => ∃ st', t st st'
 
+-- ⊓ for Patterns
+universe u
+instance {α : Type u} [State α] : Min (Pattern α) where
+  min p1 p2 := fun st => p1 st ∧ p2 st
+
 -- {A₁} R₁ {G₁} -- local proof
 -- {A₂} R₂ {G₂} -- local proof
--- (G₁ ∨ G₂) ∧ Enabled(R₁) ⊆ A₁ -- compatibility
--- (G₁ ∨ G₂) ∧ Enabled(R₂) ⊆ A₂ -- compatibility
+-- (G₁ ∨ G₂) ∧ Enabled(R₁) → A₁ -- compatibility
+-- (G₁ ∨ G₂) ∧ Enabled(R₂) → A₂ -- compatibility
 -- ──────────────────────────── (PComp)
 -- {G₁ ∨ G₂} R₁ ∪ R₂ {G₁ ∨ G₂}
+
 lemma PComp {α : Type*} [State α]
-    (t1 t2 : Transition α)
-    (A1 A2 G1 G2 : Pattern α)
+    (t1 t2 : Transition α) (A1 A2 G1 G2 : Pattern α)
     (h1 : (↑t1 : Transformer α) A1 G1) -- local proof
     (h2 : (↑t2 : Transformer α) A2 G2) -- local proof
-    (hC1 : ∀ st, (G1 ⊔ G2) st → Enabled t1 st → A1 st) -- compatibility
-    (hC2 : ∀ st, (G1 ⊔ G2) st → Enabled t2 st → A2 st) -- compatibility
-    : (↑(t1 ⊔ t2) : Transformer α) (G1 ⊔ G2) (G1 ⊔ G2) := by
+    (hC1 : (G1 ⊔ G2) ⊓ Enabled t1 ≤ A1) -- compatibility
+    (hC2 : (G1 ⊔ G2) ⊓ Enabled t2 ≤ A2) -- compatibility
+  : (↑(t1 ⊔ t2) : Transformer α) (G1 ⊔ G2) (G1 ⊔ G2) := by
   intro st st' hG hstep
   rcases hstep with hstep1 | hstep2
-  · exact Or.inl (h1 st st' (hC1 st hG ⟨st', hstep1⟩) hstep1)
-  · exact Or.inr (h2 st st' (hC2 st hG ⟨st', hstep2⟩) hstep2)
+  · exact Or.inl
+      (h1 st st'
+        (hC1 st ⟨hG, ⟨st', hstep1⟩⟩)
+        hstep1)
+  · exact Or.inr
+      (h2 st st'
+        (hC2 st ⟨hG, ⟨st', hstep2⟩⟩)
+        hstep2)
 
 def step12 : Transition Conf := step1 ⊔ step2
 lemma invariant : (↑step12 : Transformer Conf)
