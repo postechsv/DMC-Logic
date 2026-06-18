@@ -27,64 +27,19 @@ inductive enter1 : Transition Conf where
   | mk : ∀ (REST : Multiset Proc),
       enter1 ⟨{c 1 idle} + {s (free 1)} + REST⟩ ⟨{c 1 crit} + {s (held 1)} + REST⟩
 
-def enter1_enabled : Pattern Conf := fun cf =>
-  ∃ REST, cf = ⟨{c 1 idle} + {s (free 1)} + REST⟩
 
 inductive enter2 : Transition Conf where
   | mk : ∀ (REST : Multiset Proc),
       enter2 ⟨{c 2 idle} + {s (free 2)} + REST⟩ ⟨{c 2 crit} + {s (held 2)} + REST⟩
 
-def enter2_enabled : Pattern Conf := fun cf =>
-  ∃ REST, cf = ⟨{c 2 idle} + {s (free 2)} + REST⟩
 
 inductive exit1 : Transition Conf where
   | mk : ∀ (REST : Multiset Proc),
       exit1 ⟨{c 1 crit} + {s (held 1)} + REST⟩ ⟨{c 1 idle} + {s (free 2)} + REST⟩
 
-def exit1_enabled : Pattern Conf := fun cf =>
-  ∃ REST, cf = ⟨{c 1 crit} + {s (held 1)} + REST⟩
-
 inductive exit2 : Transition Conf where
   | mk : ∀ (REST : Multiset Proc),
       exit2 ⟨{c 2 crit} + {s (held 2)} + REST⟩ ⟨{c 2 idle} + {s (free 1)} + REST⟩
-
-def exit2_enabled : Pattern Conf := fun cf =>
-  ∃ REST, cf = ⟨{c 2 crit} + {s (held 2)} + REST⟩
-
-def enabled1 := enter1_enabled ⊔ exit1_enabled
-def step1 : Transition Conf := enter1 ⊔ exit1
-lemma enabled1_sound :
-    ∀ st st', step1 st st' → enabled1 st := by
-  intro st st' hstep
-  unfold step1 at hstep
-  unfold enabled1 enter1_enabled exit1_enabled
-  rcases hstep with henter | hexit
-  · cases henter with
-    | mk REST =>
-        left
-        exact ⟨REST, rfl⟩
-  · cases hexit with
-    | mk REST =>
-        right
-        exact ⟨REST, rfl⟩
-
-
-def step2 : Transition Conf := enter2 ⊔ exit2
-def enabled2 := enter2_enabled ⊔ exit2_enabled
-lemma enabled2_sound :
-    ∀ st st', step2 st st' → enabled2 st := by
-  intro st st' hstep
-  unfold step2 at hstep
-  unfold enabled2 enter2_enabled exit2_enabled
-  rcases hstep with henter | hexit
-  · cases henter with
-    | mk REST =>
-        left
-        exact ⟨REST, rfl⟩
-  · cases hexit with
-    | mk REST =>
-        right
-        exact ⟨REST, rfl⟩
 
 
 def allIdle (ps : Multiset Proc) : Prop := ∀p ∈ ps, ∃ I, p = c I idle
@@ -109,6 +64,7 @@ def requires2 := patFree2 ⊔ patCrit2
 def ensures1 := patFree2 ⊔ patCrit1
 def ensures2 := patFree1 ⊔ patCrit2
 
+def step1 : Transition Conf := enter1 ⊔ exit1
 lemma contract1_enter : (↑enter1 : Transformer Conf) requires1 ensures1 := by sorry
 lemma contract1_exit : (↑exit1 : Transformer Conf) requires1 ensures1 := by sorry
 lemma contract1 : (↑step1 : Transformer Conf) requires1 ensures1 := by
@@ -118,6 +74,8 @@ lemma contract1 : (↑step1 : Transformer Conf) requires1 ensures1 := by
   · apply contract1_enter
   · apply contract1_exit
 
+
+def step2 : Transition Conf := enter2 ⊔ exit2
 lemma contract2_enter : (↑enter2 : Transformer Conf) requires2 ensures2 := by sorry
 lemma contract2_exit : (↑exit2 : Transformer Conf) requires2 ensures2 := by sorry
 lemma contract2 : (↑step2 : Transformer Conf) requires2 ensures2 := by
@@ -127,37 +85,34 @@ lemma contract2 : (↑step2 : Transformer Conf) requires2 ensures2 := by
   · apply contract2_enter
   · apply contract2_exit
 
+def Enabled {α : Type*} [State α] (t : Transition α) : Pattern α :=
+  fun st => ∃ st', t st st'
+
 -- {A₁} R₁ {G₁} -- local proof
 -- {A₂} R₂ {G₂} -- local proof
--- D₁ ↔ enabled(R₁) -- enabledness
--- D₂ ↔ enabled(R₂) -- enabledness
--- (G₁ ∨ G₂) ∧ D₁ ⊆ A₁ -- compatibility
--- (G₁ ∨ G₂) ∧ D₂ ⊆ A₂ -- compatibility
+-- (G₁ ∨ G₂) ∧ Enabled(R₁) ⊆ A₁ -- compatibility
+-- (G₁ ∨ G₂) ∧ Enabled(R₂) ⊆ A₂ -- compatibility
 -- ──────────────────────────── (PComp)
 -- {G₁ ∨ G₂} R₁ ∪ R₂ {G₁ ∨ G₂}
 lemma PComp {α : Type*} [State α]
     (t1 t2 : Transition α)
-    (A1 A2 G1 G2 D1 D2 : Pattern α)
+    (A1 A2 G1 G2 : Pattern α)
     (h1 : (↑t1 : Transformer α) A1 G1) -- local proof
     (h2 : (↑t2 : Transformer α) A2 G2) -- local proof
-    (hD1 : ∀ st st', t1 st st' → D1 st) -- enabledness (TODO: induce this automatically by def)
-    (hD2 : ∀ st st', t2 st st' → D2 st) -- enabledness
-    (hC1 : ∀ st, (G1 ⊔ G2) st → D1 st → A1 st) -- compatibility
-    (hC2 : ∀ st, (G1 ⊔ G2) st → D2 st → A2 st) -- compatibility
+    (hC1 : ∀ st, (G1 ⊔ G2) st → Enabled t1 st → A1 st) -- compatibility
+    (hC2 : ∀ st, (G1 ⊔ G2) st → Enabled t2 st → A2 st) -- compatibility
     : (↑(t1 ⊔ t2) : Transformer α) (G1 ⊔ G2) (G1 ⊔ G2) := by
   intro st st' hG hstep
   rcases hstep with hstep1 | hstep2
-  · exact Or.inl (h1 st st' (hC1 st hG (hD1 st st' hstep1)) hstep1)
-  · exact Or.inr (h2 st st' (hC2 st hG (hD2 st st' hstep2)) hstep2)
+  · exact Or.inl (h1 st st' (hC1 st hG ⟨st', hstep1⟩) hstep1)
+  · exact Or.inr (h2 st st' (hC2 st hG ⟨st', hstep2⟩) hstep2)
 
 def step12 : Transition Conf := step1 ⊔ step2
 lemma invariant : (↑step12 : Transformer Conf)
   (ensures1 ⊔ ensures2) (ensures1 ⊔ ensures2) := by
   unfold step12
-  apply PComp step1 step2 requires1 requires2 ensures1 ensures2 enabled1 enabled2
+  apply PComp step1 step2 requires1 requires2 ensures1 ensures2
   · exact contract1
   · exact contract2
-  · exact enabled1_sound
-  · exact enabled2_sound
   · exact sorry --- (compatibility)
   · exact sorry --- (compatibility)
