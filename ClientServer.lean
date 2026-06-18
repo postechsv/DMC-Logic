@@ -87,11 +87,11 @@ lemma enabled2_sound :
 
 def allIdle (ps : Multiset Proc) : Prop := ∀p ∈ ps, ∃ I, p = c I idle
 
--- free phase
+-- every client is idle
 def patFree : Pattern Conf := fun cf =>
   ∃ REST, cf = ⟨{s free} + REST⟩ ∧ allIdle REST
 
--- critical phase
+-- all but proc i is idle
 def patCrit1 : Pattern Conf := fun cf =>
   ∃ REST, cf = ⟨{s (held 1)} + {c 1 crit} + REST⟩ ∧ allIdle REST
 
@@ -99,17 +99,12 @@ def patCrit2 : Pattern Conf := fun cf =>
   ∃ REST, cf = ⟨{s (held 2)} + {c 2 crit} + REST⟩ ∧ allIdle REST
 
 -- assume conditions
-def requires1 : Pattern Conf := fun cf =>
-  (∃ REST, cf = ⟨{c 1 idle} + {s free} + REST⟩ ∧ allIdle REST)
-  ∨ patCrit1 cf
-
-def requires2 : Pattern Conf := fun cf =>
-  (∃ REST, cf = ⟨{c 2 idle} + {s free} + REST⟩ ∧ allIdle REST)
-  ∨ patCrit2 cf
+def requires1 := patFree ⊔ patCrit1
+def requires2 := patFree ⊔ patCrit2
 
 -- guarantee conditions
-def ensures1 : Pattern Conf := fun cf => patCrit1 cf ∨ patFree cf
-def ensures2 : Pattern Conf := fun cf => patCrit2 cf ∨ patFree cf
+def ensures1 := patFree ⊔ patCrit1
+def ensures2 := patFree ⊔ patCrit2
 
 lemma contract1_enter : (↑enter1 : Transformer Conf) requires1 ensures1 := by sorry
 lemma contract1_exit : (↑exit1 : Transformer Conf) requires1 ensures1 := by sorry
@@ -135,14 +130,14 @@ lemma contract2 : (↑step2 : Transformer Conf) requires2 ensures2 := by
 -- D₂ ↔ enabled(R₂) -- enabledness
 -- (G₁ ∨ G₂) ∧ D₁ ⊆ A₁ -- compatibility
 -- (G₁ ∨ G₂) ∧ D₂ ⊆ A₂ -- compatibility
--- ────────────────────────────
+-- ──────────────────────────── (PComp)
 -- {G₁ ∨ G₂} R₁ ∪ R₂ {G₁ ∨ G₂}
 lemma PComp {α : Type*} [State α]
     (t1 t2 : Transition α)
     (A1 A2 G1 G2 D1 D2 : Pattern α)
     (h1 : (↑t1 : Transformer α) A1 G1) -- local proof
     (h2 : (↑t2 : Transformer α) A2 G2) -- local proof
-    (hD1 : ∀ st st', t1 st st' → D1 st) -- enabledness
+    (hD1 : ∀ st st', t1 st st' → D1 st) -- enabledness (TODO: induce this automatically by def)
     (hD2 : ∀ st st', t2 st st' → D2 st) -- enabledness
     (hC1 : ∀ st, (G1 ⊔ G2) st → D1 st → A1 st) -- compatibility
     (hC2 : ∀ st, (G1 ⊔ G2) st → D2 st → A2 st) -- compatibility
