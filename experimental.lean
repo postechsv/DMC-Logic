@@ -6,6 +6,53 @@ import Mathlib.Data.Multiset.AddSub
 
 universe u v w
 
+structure Conf where
+  n : Nat
+  m : Nat
+--instance : State Conf := ⟨⟩
+
+structure MetaPattern where
+  term : Lean.Expr
+  cond : Lean.Expr
+
+def pat1 (n m : Nat) : Conf × Prop :=
+  (⟨n, m⟩, n > m)
+
+def pat2 (m : Nat) : Conf × Prop :=
+  (⟨0, m⟩, True)
+
+def pat3 (n m _unused : Nat) : Conf × Prop :=
+  (⟨n, m⟩, n > m)
+
+def toMeta (p : Lean.Expr) : Lean.Meta.MetaM MetaPattern := do
+  let (vars, _, resultType) ← Lean.Meta.forallMetaTelescopeReducing
+    (← Lean.Meta.inferType p)
+  let expectedType ← Lean.Meta.mkAppM ``Prod
+    #[Lean.mkConst ``Conf, Lean.mkSort .zero]
+  unless ← Lean.Meta.isDefEq resultType expectedType do
+    throwError "expected a pattern returning Conf × Prop, got {resultType}"
+  let value ← Lean.Meta.whnf (Lean.mkAppN p vars)
+  let termProj ← Lean.Meta.mkAppM ``Prod.fst #[value]
+  let condProj ← Lean.Meta.mkAppM ``Prod.snd #[value]
+  let some term ← Lean.Expr.reduceProjStruct? termProj
+    | throwError "could not extract the pattern term"
+  let some cond ← Lean.Expr.reduceProjStruct? condProj
+    | throwError "could not extract the pattern condition"
+  return ⟨term, cond⟩
+
+elab "#toMeta " p:term : command => do
+  Lean.Elab.Command.liftTermElabM do
+    let objectPattern ← Lean.Elab.Term.elabTerm p none
+    let pattern ← toMeta objectPattern
+    Lean.logInfo m!"{pattern.term} where {pattern.cond}"
+
+#toMeta pat1
+#toMeta pat2
+#toMeta pat3
+
+
+
+namespace try1
 class Returns (T : Sort u) (F : Sort v) : Prop where
 
 instance returnsBase (T : Sort u) :
@@ -40,6 +87,21 @@ def pat1 := fun (x : Nat × Nat) ↦ ((⟨x.1, x.2⟩, x.1 > x.2) : Conf × Prop
 def pat2 := fun (x : Nat × Nat) ↦ ((⟨x.2, x.1⟩, x.2 > x.1) : Conf × Prop)
 def pat3 := fun (_ : Nat × Nat) ↦ ((⟨4,3⟩, true) : Conf × Prop)
 def pat4 := fun (x : Nat × Nat) ↦ ((⟨x.2, x.1⟩, x.2 < x.1) : Conf × Prop)
+
+-- ⟨ 0, n ⟩ -> ⟨ n, m ⟩ if m < 3
+def rule1? {Ctx : Type u} (p : Ctx → Conf × Prop) :
+    Ctx × Nat → Option (Conf × Prop) :=
+  fun (ctx, x3) =>
+    match p ctx with
+    | (⟨0, x2⟩, cond) => some (⟨x2, x3⟩, cond ∧ x3 < 3)
+    | _ => none
+
+
+
+-- example : swapPattern pat1 = pat4 := by
+--   funext x
+--   simp [swapPattern, pat1, pat4]
+
 
 def instanceOf {α : Sort u} (t : Conf) (p : α → Conf × Prop) : Prop :=
   ∃ x, (p x).fst = t ∧ (p x).snd
@@ -112,3 +174,5 @@ example : ¬(
   intro h
   obtain ⟨y, _, hconf⟩ := h () trivial
   simp at hconf
+
+end try1
