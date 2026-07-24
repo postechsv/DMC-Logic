@@ -85,6 +85,14 @@ instance {A : Type u} {R : Type v} [RuleSemantics R] :
     RuleSemantics (A → R) where
   steps r before after := ∃ x, RuleSemantics.steps (r x) before after
 
+def postImage {P : Type u} {R : Type v}
+    [PatternSemantics P] [RuleSemantics R]
+    (r : R) (source : P) : Conf → Prop :=
+  fun after =>
+    ∃ before,
+      PatternSemantics.denotes source before ∧
+      RuleSemantics.steps r before after
+
 def mapsInto {P : Type u} {Q : Type v} {R : Type w}
     [PatternSemantics P] [PatternSemantics Q] [RuleSemantics R]
     (r : R) (source : P) (target : Q) : Prop :=
@@ -92,6 +100,20 @@ def mapsInto {P : Type u} {Q : Type v} {R : Type w}
     PatternSemantics.denotes source before →
     RuleSemantics.steps r before after →
     PatternSemantics.denotes target after
+
+-- minimality of postImage (strongestness)
+theorem mapsInto_iff_postImage_subset
+    {P : Type u} {Q : Type v} {R : Type w}
+    [PatternSemantics P] [PatternSemantics Q] [RuleSemantics R]
+    (r : R) (source : P) (target : Q) :
+    mapsInto r source target ↔
+      ∀ after, postImage r source after →
+        PatternSemantics.denotes target after := by
+  constructor
+  · rintro h after ⟨before, hsource, hstep⟩
+    exact h before after hsource hstep
+  · intro h before after hsource hstep
+    exact h after ⟨before, hsource, hstep⟩
 
 
 def toMetaRule (r : Lean.Expr) : Lean.Meta.MetaM MetaRule := do
