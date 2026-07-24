@@ -42,10 +42,12 @@ def pat3 := fun (_ : Nat × Nat) ↦ ((⟨4,3⟩, true) : Conf × Prop)
 def pat4 := fun (x : Nat × Nat) ↦ ((⟨x.2, x.1⟩, x.2 < x.1) : Conf × Prop)
 
 def instanceOf {α : Sort u} (t : Conf) (p : α → Conf × Prop) : Prop :=
-  ∃ x, (p x).snd ∧ (p x).fst = t
+  ∃ x, (p x).fst = t ∧ (p x).snd
+
+infix:50 " ∈ " => instanceOf
 
 def subsumedBy' {α : Sort u} (p1 p2 : α → Conf × Prop) : Prop :=
-  ∀ t, instanceOf t p1 → instanceOf t p2
+  ∀ t, t ∈ p1 → t ∈ p2
 
 def subsumedBy {α : Sort u} (p1 p2 : α → Conf × Prop) : Prop :=
   ∀ x, (p1 x).snd → ∃ y, (p2 y).snd ∧ (p1 x).fst = (p2 y).fst
@@ -55,13 +57,13 @@ theorem subsumedBy'_iff_subsumedBy {α : Sort u}
     subsumedBy' p1 p2 ↔ subsumedBy p1 p2 := by
   constructor
   · intro h x hx
-    obtain ⟨y, hy, hyt⟩ :=
-      h (p1 x).fst ⟨x, hx, rfl⟩
+    obtain ⟨y, hyt, hy⟩ :=
+      h (p1 x).fst ⟨x, rfl, hx⟩
     exact ⟨y, hy, hyt.symm⟩
   · intro h t ht
-    obtain ⟨x, hx, hxt⟩ := ht
+    obtain ⟨x, hxt, hx⟩ := ht
     obtain ⟨y, hy, hxy⟩ := h x hx
-    exact ⟨y, hy, hxy.symm.trans hxt⟩
+    exact ⟨y, hxy.symm.trans hxt, hy⟩
 
 infix:50 " ⊑ " => subsumedBy
 
