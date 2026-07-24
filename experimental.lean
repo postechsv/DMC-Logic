@@ -15,11 +15,25 @@ structure MetaPattern where
   term : Lean.Expr
   cond : Lean.Expr
 
+structure RewriteRule where
+  lhs : Conf
+  rhs : Conf
+  cond : Prop
+
+structure MetaRule where
+  lhs : Lean.Expr
+  rhs : Lean.Expr
+  cond : Lean.Expr
+
 def pat1 (n m : Nat) : Conf × Prop :=
   (⟨n, m⟩, n > m)
 
 def pat2 (m : Nat) : Conf × Prop :=
   (⟨0, m⟩, True)
+
+def pat2' (m n : Nat) : Conf × Prop :=
+  (⟨m, n⟩, n < 4)
+#check pat2'
 
 def pat3 (n m _unused : Nat) : Conf × Prop :=
   (⟨n, m⟩, n > m)
@@ -49,6 +63,82 @@ elab "#toMeta " p:term : command => do
 #toMeta pat1
 #toMeta pat2
 #toMeta pat3
+
+class PatternSemantics (P : Type u) where
+  denotes : P → Conf → Prop
+
+instance : PatternSemantics (Conf × Prop) where
+  denotes p state := p.snd ∧ p.fst = state
+
+instance {A : Type u} {P : Type v} [PatternSemantics P] :
+    PatternSemantics (A → P) where
+  denotes p state := ∃ x, PatternSemantics.denotes (p x) state
+
+class RuleSemantics (R : Type u) where
+  steps : R → Conf → Conf → Prop
+
+instance : RuleSemantics RewriteRule where
+  steps r before after :=
+    r.cond ∧ before = r.lhs ∧ after = r.rhs
+
+instance {A : Type u} {R : Type v} [RuleSemantics R] :
+    RuleSemantics (A → R) where
+  steps r before after := ∃ x, RuleSemantics.steps (r x) before after
+
+def mapsInto {P : Type u} {Q : Type v} {R : Type w}
+    [PatternSemantics P] [PatternSemantics Q] [RuleSemantics R]
+    (r : R) (source : P) (target : Q) : Prop :=
+  ∀ before after,
+    PatternSemantics.denotes source before →
+    RuleSemantics.steps r before after →
+    PatternSemantics.denotes target after
+
+
+def toMetaRule (r : Lean.Expr) : Lean.Meta.MetaM MetaRule := do
+  let (vars, _, resultType) ← Lean.Meta.forallMetaTelescopeReducing
+    (← Lean.Meta.inferType r)
+  unless ← Lean.Meta.isDefEq resultType (Lean.mkConst ``RewriteRule) do
+    throwError "expected a function returning RewriteRule, got {resultType}"
+  let value ← Lean.Meta.whnf (Lean.mkAppN r vars)
+  let lhsProj ← Lean.Meta.mkAppM ``RewriteRule.lhs #[value]
+  let rhsProj ← Lean.Meta.mkAppM ``RewriteRule.rhs #[value]
+  let condProj ← Lean.Meta.mkAppM ``RewriteRule.cond #[value]
+  let some lhs ← Lean.Expr.reduceProjStruct? lhsProj
+    | throwError "could not extract the rule's left-hand side"
+  let some rhs ← Lean.Expr.reduceProjStruct? rhsProj
+    | throwError "could not extract the rule's right-hand side"
+  let some cond ← Lean.Expr.reduceProjStruct? condProj
+    | throwError "could not extract the rule's condition"
+  return ⟨lhs, rhs, cond⟩
+
+elab "#toMetaRule " r:term : command => do
+  Lean.Elab.Command.liftTermElabM do
+    let objectRule ← Lean.Elab.Term.elabTerm r none
+    let rule ← toMetaRule objectRule
+    Lean.logInfo m!"{rule.lhs} => {rule.rhs} if {rule.cond}"
+
+
+-- ⟨0, n⟩ → ⟨n, m⟩ if m < 3
+def rule1 (n m : Nat) : RewriteRule :=
+  ⟨⟨0, n⟩, ⟨n, m⟩, m < 3⟩
+
+#toMetaRule rule1
+
+theorem rule1_maps_pat2_into_pat2' : mapsInto rule1 pat2 pat2' := by
+  intro before after _ step
+  obtain ⟨n, m, hm, _, hafter⟩ := step
+  refine ⟨n, m, ?_, ?_⟩
+  · simp [pat2']
+    simp [rule1] at hm
+    omega
+  · simpa [rule1, pat2'] using hafter.symm
+
+
+
+
+
+
+
 
 
 
