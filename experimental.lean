@@ -85,19 +85,31 @@ instance {A : Type u} {R : Type v} [RuleSemantics R] :
     RuleSemantics (A → R) where
   steps r before after := ∃ x, RuleSemantics.steps (r x) before after
 
+instance {R : Type u} [RuleSemantics R] : RuleSemantics (List R) where
+  steps rules before after :=
+    ∃ rule ∈ rules, RuleSemantics.steps rule before after
+
+def denotesDisjunction {P : Type u} [PatternSemantics P]
+    (patterns : List P) (state : Conf) : Prop :=
+  ∃ pattern ∈ patterns, PatternSemantics.denotes pattern state
+
+instance {P : Type u} [PatternSemantics P] :
+    PatternSemantics (List P) where
+  denotes := denotesDisjunction
+
 def postImage {P : Type u} {R : Type v}
     [PatternSemantics P] [RuleSemantics R]
-    (r : R) (source : P) : Conf → Prop :=
+    (r : R) (patt0 : P) : Conf → Prop :=
   fun after =>
     ∃ before,
-      PatternSemantics.denotes source before ∧
+      PatternSemantics.denotes patt0 before ∧
       RuleSemantics.steps r before after
 
 def mapsInto {P : Type u} {Q : Type v} {R : Type w}
     [PatternSemantics P] [PatternSemantics Q] [RuleSemantics R]
-    (r : R) (source : P) (target : Q) : Prop :=
+    (r : R) (patt0 : P) (target : Q) : Prop :=
   ∀ before after,
-    PatternSemantics.denotes source before →
+    PatternSemantics.denotes patt0 before →
     RuleSemantics.steps r before after →
     PatternSemantics.denotes target after
 
@@ -105,15 +117,15 @@ def mapsInto {P : Type u} {Q : Type v} {R : Type w}
 theorem mapsInto_iff_postImage_subset
     {P : Type u} {Q : Type v} {R : Type w}
     [PatternSemantics P] [PatternSemantics Q] [RuleSemantics R]
-    (r : R) (source : P) (target : Q) :
-    mapsInto r source target ↔
-      ∀ after, postImage r source after →
+    (r : R) (patt0 : P) (target : Q) :
+    mapsInto r patt0 target ↔
+      ∀ after, postImage r patt0 after →
         PatternSemantics.denotes target after := by
   constructor
-  · rintro h after ⟨before, hsource, hstep⟩
-    exact h before after hsource hstep
-  · intro h before after hsource hstep
-    exact h after ⟨before, hsource, hstep⟩
+  · rintro h after ⟨before, hpatt0, hstep⟩
+    exact h before after hpatt0 hstep
+  · intro h before after hpatt0 hstep
+    exact h after ⟨before, hpatt0, hstep⟩
 
 
 def toMetaRule (r : Lean.Expr) : Lean.Meta.MetaM MetaRule := do
@@ -154,6 +166,70 @@ theorem rule1_maps_pat2_into_pat2' : mapsInto rule1 pat2 pat2' := by
     simp [rule1] at hm
     omega
   · simpa [rule1, pat2'] using hafter.symm
+
+
+
+
+
+namespace example1
+
+def patt0 (n : Nat) : Conf × Prop :=
+  (⟨0, n⟩, True)
+
+def rule1 (n : Nat) : RewriteRule :=
+  ⟨⟨0, n⟩, ⟨n, 0⟩, n < 3⟩
+
+def rule2 (n : Nat) : RewriteRule :=
+  ⟨⟨0, n⟩, ⟨n, 1⟩, 3 ≤ n⟩
+
+def rules : List (Nat → RewriteRule) :=
+  [rule1, rule2]
+
+-- Hardcoded stand-in for the disjunction computed by DM-Check.
+-- ((< 0, $1:Nat >) | ((true).NuITP-Bool)) \/
+-- ((< $2:Nat, s 0 >) | (true /\ s_^3(0) <= $2:Nat = (true).Bool)) \/
+-- ((< $3:Nat, 0 >) | (true /\ $3:Nat < s_^3(0) = (true).Bool))
+def computedPost : List (Nat → Conf × Prop) :=
+  [fun n => (⟨n, 0⟩, n < 3),
+   fun n => (⟨n, 1⟩, 3 ≤ n)]
+
+theorem computedPost_is_postImage :
+    postImage rules patt0 =
+      denotesDisjunction computedPost := by
+  funext state
+  simp [postImage, denotesDisjunction, PatternSemantics.denotes,
+    RuleSemantics.steps, rules, patt0, rule1, rule2,
+    computedPost]
+  aesop
+
+-- A sound but non-minimal over-approximation with an extra branch.
+def largerPost : List (Nat → Conf × Prop) :=
+  computedPost ++ [fun n => (⟨n, 2⟩, True)]
+
+theorem rules_map_patt0_into_largerPost :
+    mapsInto rules patt0 largerPost := by
+  rw [mapsInto_iff_postImage_subset]
+  intro state hpost
+  rw [computedPost_is_postImage] at hpost
+  change denotesDisjunction largerPost state
+  obtain ⟨pattern, hmem, hstate⟩ := hpost
+  exact ⟨pattern, by simp [largerPost, hmem], hstate⟩
+
+theorem largerPost_is_not_postImage :
+    postImage rules patt0 ≠ denotesDisjunction largerPost := by
+  intro heq
+  have hextra : denotesDisjunction largerPost ⟨0, 2⟩ := by
+    refine ⟨fun n => (⟨n, 2⟩, True), ?_, ?_⟩
+    · simp [largerPost]
+    · exact ⟨0, True.intro, rfl⟩
+  have hpost : postImage rules patt0 ⟨0, 2⟩ := by
+    rw [heq]
+    exact hextra
+  rw [computedPost_is_postImage] at hpost
+  simp [denotesDisjunction, computedPost,
+    PatternSemantics.denotes] at hpost
+
+end example1
 
 
 

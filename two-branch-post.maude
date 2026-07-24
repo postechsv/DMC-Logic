@@ -1,0 +1,28 @@
+mod TWO-BRANCH-POST is
+  protecting NAT .
+
+  sort State .
+  op <_,_> : Nat Nat -> State [ctor] .
+
+  var N : Nat .
+
+  crl [small] : < 0, N > => < N, 0 >
+    if N < 3 = true .
+
+  crl [large] : < 0, N > => < N, 1 >
+    if 3 <= N = true .
+endm
+
+--- load two-branch-post.maude
+--- load /tmp/dmcheck.bgLCZ9/files/NuITP.maude
+--- load /tmp/dmcheck.bgLCZ9/files/dm-check.maude
+
+--- set module TWO-BRANCH-POST .
+
+--- generate ind-invariant (< 0, N:Nat >) | true .
+
+--- generate next level .
+
+--- show last .
+
+--- quit
