@@ -1,9 +1,95 @@
-import Bakery.DMC3
-
 import Mathlib.Data.Multiset.Basic
 import Mathlib.Data.Multiset.AddSub
 
+namespace framework
 
+universe u v w x
+
+-- α is the type of states
+class State (α : Type u) : Prop where
+
+-- P is a type of patterns denoting sets of α-states.
+class Pattern (α : Type u) [State α] (P : Type v) where
+  semantics : P → α → Prop
+
+instance {α : Type u} [State α] : Pattern α (α × Prop) where
+  semantics p state := p.fst = state ∧ p.snd
+
+instance {α : Type u} {A : Type v} {P : Type w}
+    [State α] [Pattern α P] : Pattern α (A → P) where
+  semantics p state := ∃ x, Pattern.semantics (p x) state
+
+instance {α : Type u} {P : Type v} [State α] [Pattern α P] :
+    Pattern α (List P) where
+  semantics patterns state :=
+    ∃ pattern ∈ patterns, Pattern.semantics pattern state
+
+
+
+-- R is a type of rules denoting transitions between α-states.
+class Rule (α : Type u) [State α] (R : Type v) where
+  steps : R → α → α → Prop
+
+structure RewriteRule (α : Type u) where
+  lhs : α
+  rhs : α
+  cond : Prop
+
+instance {α : Type u} [State α] : Rule α (RewriteRule α) where
+  steps r before after :=
+    r.lhs = before ∧ r.rhs = after ∧ r.cond
+
+instance {α : Type u} {A : Type v} {R : Type w}
+    [State α] [Rule α R] : Rule α (A → R) where
+  steps r before after := ∃ x, Rule.steps (r x) before after
+
+instance {α : Type u} {R : Type v} [State α] [Rule α R] :
+    Rule α (List R) where
+  steps rules before after :=
+    ∃ rule ∈ rules, Rule.steps rule before after
+
+
+
+def postImage {α : Type u} {P : Type v} {R : Type w}
+    [State α] [Pattern α P] [Rule α R]
+    (r : R) (patt0 : P) : α → Prop :=
+  fun after =>
+    ∃ before,
+      Pattern.semantics patt0 before ∧
+      Rule.steps r before after
+
+def mapsInto
+    {α : Type u} {P : Type v} {Q : Type w} {R : Type x}
+    [State α] [Pattern α P] [Pattern α Q] [Rule α R]
+    (r : R) (patt0 : P) (target : Q) : Prop :=
+  ∀ (before after : α),
+    Pattern.semantics patt0 before →
+    Rule.steps r before after →
+    Pattern.semantics target after
+
+-- Minimality of postImage (strongestness).
+theorem mapsInto_iff_postImage_subset
+    {α : Type u} {P : Type v} {Q : Type w} {R : Type x}
+    [State α] [Pattern α P] [Pattern α Q] [Rule α R]
+    (r : R) (patt0 : P) (target : Q) :
+    mapsInto (α := α) r patt0 target ↔
+      ∀ (after : α), postImage (α := α) r patt0 after →
+        Pattern.semantics target after := by
+  constructor
+  · rintro h after ⟨before, hpatt0, hstep⟩
+    exact h before after hpatt0 hstep
+  · intro h before after hpatt0 hstep
+    exact h after ⟨before, hpatt0, hstep⟩
+
+end framework
+
+
+
+
+
+
+
+namespace experimental
 universe u v w
 
 structure Conf where
@@ -236,3 +322,4 @@ theorem largerPost_is_not_postImage :
     PatternSemantics.denotes] at hpost
 
 end example1
+end experimental
