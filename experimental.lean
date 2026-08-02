@@ -277,6 +277,52 @@ def computedPost :=
   (fun U₁ U₂ : Multiset Nat =>
     ((⟨∅, U₁, U₂ + {1}⟩ : Conf), True))
 
+-- The two AC-unifier branches that an eventual implementation of `getMGUs`
+-- should compute for
+--
+--     X + Y + {2} = {1} + Z.
+--
+-- The residual variables `U₁` and `U₂` are the parameters of the
+-- corresponding lambda closures in `computedPost`.
+def mguBranches (X Y Z : Multiset Nat) : Prop :=
+  (∃ U₁ U₂ : Multiset Nat,
+    X = U₂ + {1} ∧ Y = U₁ ∧ Z = U₁ + U₂ + {2}) ∨
+  (∃ U₁ U₂ : Multiset Nat,
+    X = U₁ ∧ Y = U₂ + {1} ∧ Z = U₁ + U₂ + {2})
+
+-- What `mapsInto` needs from unification is only coverage: every solution of
+-- the source equation factors through one of the reported branches.  It does
+-- not need minimality or irredundancy of those branches.
+structure CompleteMGUs
+    (branches : Multiset Nat → Multiset Nat → Multiset Nat → Prop) : Prop where
+  complete : ∀ X Y Z,
+    X + Y + {2} = {1} + Z → branches X Y Z
+
+-- Dummy external oracle.  There is intentionally no unification algorithm
+-- here: the axiom directly supplies the desired branches together with the
+-- sole certification fact used below.  Later this axiom can be replaced by a
+-- checked Maude certificate without changing the `mapsInto` proof.
+axiom getMGUs : CompleteMGUs mguBranches
+
+theorem rule_maps_pat_into_computedPost_via_getMGUs :
+    mapsInto (α := Conf) rule pat computedPost := by
+  intro before after hpat hrule
+  simp only [Pattern.semantics, AtPattern.semantics, pat] at hpat
+  simp only [Rule.semantics, AtRule.semantics, rule] at hrule
+  rcases hpat with ⟨Z, hbefore, -⟩
+  rcases hrule with ⟨X, Y, hlhs, hafter, -⟩
+  have hunifies : X + Y + {2} = {1} + Z := by
+    exact (Conf.mk.inj (hlhs.trans hbefore.symm)).1
+  rcases getMGUs.complete X Y Z hunifies with hbranch | hbranch
+  · left
+    rcases hbranch with ⟨U₁, U₂, hX, hY, -⟩
+    refine ⟨U₁, U₂, ?_⟩
+    simpa [AtPattern.semantics, computedPost, hX, hY] using hafter
+  · right
+    rcases hbranch with ⟨U₁, U₂, hX, hY, -⟩
+    refine ⟨U₁, U₂, ?_⟩
+    simpa [AtPattern.semantics, computedPost, hX, hY] using hafter
+
 theorem computedPost_is_postImage :
     postImage (α := Conf) rule pat =
       Pattern.denotes computedPost := by
