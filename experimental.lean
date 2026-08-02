@@ -23,19 +23,24 @@ instance {α : Type u} {A : Type v} {P : Type w}
 class Pattern (α : Type u) [State α] (P : Type v) where
   semantics : P → α → Prop
 
+def Pattern.denotes
+    {α : Type u} [State α] {P : Type v} [Pattern α P]
+    (pattern : P) (state : α) : Prop :=
+  Pattern.semantics pattern state
+
 instance {α : Type u} {P : Type v} [State α] [AtPattern α P] :
     Pattern α P where
   semantics := AtPattern.semantics
 
-structure PatternDisjunction (P : Type v) (Q : Type w) where
+structure Disjunction (P : Type v) (Q : Type w) where
   left : P
   right : Q
 
-scoped[Pattern] infixr:65 " ⊔ " => framework.PatternDisjunction.mk
+scoped[Disjunction] infixr:65 " ⊔ " => framework.Disjunction.mk
 
 instance {α : Type u} {P : Type v} {Q : Type w}
     [State α] [Pattern α P] [Pattern α Q] :
-    Pattern α (PatternDisjunction P Q) where
+    Pattern α (Disjunction P Q) where
   semantics patterns state :=
     Pattern.semantics patterns.left state ∨
     Pattern.semantics patterns.right state
@@ -44,8 +49,8 @@ theorem Pattern.disjunction_assoc
     {α : Type u} {P : Type v} {Q : Type w} {R : Type x}
     [State α] [Pattern α P] [Pattern α Q] [Pattern α R]
     (p : P) (q : Q) (r : R) (state : α) :
-    Pattern.semantics (PatternDisjunction.mk (PatternDisjunction.mk p q) r) state ↔
-      Pattern.semantics (PatternDisjunction.mk p (PatternDisjunction.mk q r)) state := by
+    Pattern.semantics (Disjunction.mk (Disjunction.mk p q) r) state ↔
+      Pattern.semantics (Disjunction.mk p (Disjunction.mk q r)) state := by
   change
     (Pattern.semantics p state ∨ Pattern.semantics q state) ∨
         Pattern.semantics r state ↔
@@ -55,39 +60,62 @@ theorem Pattern.disjunction_assoc
 
 
 
--- R is a type of rules denoting transitions between α-states.
-class Rule (α : Type u) [State α] (R : Type v) where
+-- R is a type of atomic rules denoting transitions between α-states.
+class AtRule (α : Type u) [State α] (R : Type v) where
   semantics : R → α → α → Prop
 
-instance {α : Type u} [State α] : Rule α (α × α × Prop) where
+instance {α : Type u} [State α] : AtRule α (α × α × Prop) where
   semantics r before after :=
     r.1 = before ∧ r.2.1 = after ∧ r.2.2
 
 instance {α : Type u} {A : Type v} {R : Type w}
-    [State α] [Rule α R] : Rule α (A → R) where
-  semantics r before after := ∃ x, Rule.semantics (r x) before after
+    [State α] [AtRule α R] : AtRule α (A → R) where
+  semantics r before after := ∃ x, AtRule.semantics (r x) before after
 
-instance {α : Type u} {R : Type v} [State α] [Rule α R] :
-    Rule α (List R) where
+-- R is either an atomic rule or a disjunction of rules.
+class Rule (α : Type u) [State α] (R : Type v) where
+  semantics : R → α → α → Prop
+
+instance {α : Type u} {R : Type v} [State α] [AtRule α R] :
+    Rule α R where
+  semantics := AtRule.semantics
+
+instance {α : Type u} {R : Type v} {S : Type w}
+    [State α] [Rule α R] [Rule α S] :
+    Rule α (Disjunction R S) where
   semantics rules before after :=
-    ∃ rule ∈ rules, Rule.semantics rule before after
+    Rule.semantics rules.left before after ∨
+    Rule.semantics rules.right before after
+
+theorem Rule.disjunction_assoc
+    {α : Type u} {R : Type v} {S : Type w} {T : Type x}
+    [State α] [Rule α R] [Rule α S] [Rule α T]
+    (r : R) (s : S) (t : T) (before after : α) :
+    Rule.semantics (Disjunction.mk (Disjunction.mk r s) t) before after ↔
+      Rule.semantics (Disjunction.mk r (Disjunction.mk s t)) before after := by
+  change
+    (Rule.semantics r before after ∨ Rule.semantics s before after) ∨
+        Rule.semantics t before after ↔
+      Rule.semantics r before after ∨
+        (Rule.semantics s before after ∨ Rule.semantics t before after)
+  exact or_assoc
 
 
 
 def postImage {α : Type u} {P : Type v} {R : Type w}
     [State α] [Pattern α P] [Rule α R]
-    (r : R) (patt0 : P) : α → Prop :=
+    (r : R) (p : P) : α → Prop :=
   fun after =>
     ∃ before,
-      Pattern.semantics patt0 before ∧
+      Pattern.semantics p before ∧
       Rule.semantics r before after
 
 def mapsInto
     {α : Type u} {P : Type v} {Q : Type w} {R : Type x}
     [State α] [Pattern α P] [Pattern α Q] [Rule α R]
-    (r : R) (patt0 : P) (target : Q) : Prop :=
+    (r : R) (p : P) (target : Q) : Prop :=
   ∀ (before after : α),
-    Pattern.semantics patt0 before →
+    Pattern.semantics p before →
     Rule.semantics r before after →
     Pattern.semantics target after
 
@@ -111,7 +139,7 @@ end framework
 namespace ex1
 
 open framework
-open scoped Pattern
+open scoped Disjunction
 
 structure Conf where
   n : Nat
@@ -125,25 +153,24 @@ def patt0 (n : Nat) : Conf × Prop :=
 def rule1 (n : Nat) : Conf × Conf × Prop :=
   ⟨⟨0, n⟩, ⟨n, 0⟩, n < 3⟩
 
-def rule2 (n : Nat) : Conf × Conf × Prop :=
-  ⟨⟨0, n⟩, ⟨n, 1⟩, 3 ≤ n⟩
+def rule2 (n m : Nat) : Conf × Conf × Prop :=
+  ⟨⟨0, n⟩, ⟨n, 1⟩, 3 ≤ n ∧ m = 0⟩
 
-def rules : List (Nat → Conf × Conf × Prop) :=
-  [rule1, rule2]
+def rules :=
+  rule1 ⊔ rule2
 
--- Hardcoded stand-in for the disjunction computed by DM-Check.
--- ((< 0, $1:Nat >) | ((true).NuITP-Bool)) \/
--- ((< $2:Nat, s 0 >) | (true /\ s_^3(0) <= $2:Nat = (true).Bool)) \/
--- ((< $3:Nat, 0 >) | (true /\ $3:Nat < s_^3(0) = (true).Bool))
 def computedPost :=
   (fun n : Nat => ((⟨n, 0⟩ : Conf), n < 3)) ⊔
   (fun n m : Nat => ((⟨n, 1⟩ : Conf), 3 ≤ n ∧ m = 0))
 
+#print computedPost
+
 theorem computedPost_is_postImage :
     postImage (α := Conf) rules patt0 =
-      @Pattern.semantics Conf inferInstance _ inferInstance computedPost := by
+      Pattern.denotes computedPost := by
   funext state
-  simp [postImage, AtPattern.semantics, Pattern.semantics, Rule.semantics,
+  simp [postImage, Pattern.denotes, AtPattern.semantics, Pattern.semantics,
+    AtRule.semantics, Rule.semantics,
     Conf.mk.injEq, rules, patt0, rule1, rule2,
     computedPost]
   constructor
@@ -167,16 +194,16 @@ theorem rules_map_patt0_into_largerPost :
 
 theorem largerPost_is_not_postImage :
     postImage (α := Conf) rules patt0 ≠
-      @Pattern.semantics Conf inferInstance _ inferInstance largerPost := by
+      Pattern.denotes largerPost := by
   intro heq
-  have hextra : @Pattern.semantics Conf inferInstance _ inferInstance
-      largerPost ⟨0, 2⟩ := by
-    exact Or.inr ⟨0, rfl, True.intro⟩
+  have hextra : Pattern.denotes largerPost (⟨0, 2⟩ : Conf) := by
+    simp [Pattern.denotes, largerPost, computedPost,
+      AtPattern.semantics, Pattern.semantics, Conf.mk.injEq]
   have hpost : postImage (α := Conf) rules patt0 ⟨0, 2⟩ := by
     rw [heq]
     exact hextra
   rw [computedPost_is_postImage] at hpost
-  simp [computedPost, AtPattern.semantics, Pattern.semantics,
+  simp [Pattern.denotes, computedPost, AtPattern.semantics, Pattern.semantics,
     Conf.mk.injEq] at hpost
 
 end ex1
