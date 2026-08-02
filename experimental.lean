@@ -28,25 +28,20 @@ instance {α : Type u} {P : Type v} [State α] [Pattern α P] :
 
 -- R is a type of rules denoting transitions between α-states.
 class Rule (α : Type u) [State α] (R : Type v) where
-  steps : R → α → α → Prop
+  semantics : R → α → α → Prop
 
-structure RewriteRule (α : Type u) where
-  lhs : α
-  rhs : α
-  cond : Prop
-
-instance {α : Type u} [State α] : Rule α (RewriteRule α) where
-  steps r before after :=
-    r.lhs = before ∧ r.rhs = after ∧ r.cond
+instance {α : Type u} [State α] : Rule α (α × α × Prop) where
+  semantics r before after :=
+    r.1 = before ∧ r.2.1 = after ∧ r.2.2
 
 instance {α : Type u} {A : Type v} {R : Type w}
     [State α] [Rule α R] : Rule α (A → R) where
-  steps r before after := ∃ x, Rule.steps (r x) before after
+  semantics r before after := ∃ x, Rule.semantics (r x) before after
 
 instance {α : Type u} {R : Type v} [State α] [Rule α R] :
     Rule α (List R) where
-  steps rules before after :=
-    ∃ rule ∈ rules, Rule.steps rule before after
+  semantics rules before after :=
+    ∃ rule ∈ rules, Rule.semantics rule before after
 
 
 
@@ -56,7 +51,7 @@ def postImage {α : Type u} {P : Type v} {R : Type w}
   fun after =>
     ∃ before,
       Pattern.semantics patt0 before ∧
-      Rule.steps r before after
+      Rule.semantics r before after
 
 def mapsInto
     {α : Type u} {P : Type v} {Q : Type w} {R : Type x}
@@ -64,7 +59,7 @@ def mapsInto
     (r : R) (patt0 : P) (target : Q) : Prop :=
   ∀ (before after : α),
     Pattern.semantics patt0 before →
-    Rule.steps r before after →
+    Rule.semantics r before after →
     Pattern.semantics target after
 
 -- Minimality of postImage (strongestness).
@@ -84,7 +79,79 @@ theorem mapsInto_iff_postImage_subset
 end framework
 
 
+namespace ex1
 
+open framework
+
+structure Conf where
+  n : Nat
+  m : Nat
+
+instance : State Conf := ⟨⟩
+
+def patt0 (n : Nat) : Conf × Prop :=
+  (⟨0, n⟩, True)
+
+def rule1 (n : Nat) : Conf × Conf × Prop :=
+  ⟨⟨0, n⟩, ⟨n, 0⟩, n < 3⟩
+
+def rule2 (n : Nat) : Conf × Conf × Prop :=
+  ⟨⟨0, n⟩, ⟨n, 1⟩, 3 ≤ n⟩
+
+def rules : List (Nat → Conf × Conf × Prop) :=
+  [rule1, rule2]
+
+-- Hardcoded stand-in for the disjunction computed by DM-Check.
+-- ((< 0, $1:Nat >) | ((true).NuITP-Bool)) \/
+-- ((< $2:Nat, s 0 >) | (true /\ s_^3(0) <= $2:Nat = (true).Bool)) \/
+-- ((< $3:Nat, 0 >) | (true /\ $3:Nat < s_^3(0) = (true).Bool))
+def computedPost : List (Nat → Conf × Prop) :=
+  [fun n => (⟨n, 0⟩, n < 3),
+   fun n => (⟨n, 1⟩, 3 ≤ n)]
+
+theorem computedPost_is_postImage :
+    postImage (α := Conf) rules patt0 =
+      @Pattern.semantics Conf inferInstance _ inferInstance computedPost := by
+  funext state
+  simp [postImage, Pattern.semantics, Rule.semantics,
+    Conf.mk.injEq, rules, patt0, rule1, rule2,
+    computedPost]
+  constructor
+  · rintro ⟨a, ha | ha⟩
+    · exact Or.inl ⟨a, ha⟩
+    · exact Or.inr ⟨a, ha⟩
+  · rintro (⟨a, ha⟩ | ⟨a, ha⟩)
+    · exact ⟨a, Or.inl ha⟩
+    · exact ⟨a, Or.inr ha⟩
+
+-- A sound but non-minimal over-approximation with an extra branch.
+def largerPost : List (Nat → Conf × Prop) :=
+  computedPost ++ [fun n => (⟨n, 2⟩, True)]
+
+theorem rules_map_patt0_into_largerPost :
+    mapsInto (α := Conf) rules patt0 largerPost := by
+  rw [mapsInto_iff_postImage_subset]
+  intro state hpost
+  rw [computedPost_is_postImage] at hpost
+  obtain ⟨pattern, hmem, hstate⟩ := hpost
+  exact ⟨pattern, by simp [largerPost, hmem], hstate⟩
+
+theorem largerPost_is_not_postImage :
+    postImage (α := Conf) rules patt0 ≠
+      @Pattern.semantics Conf inferInstance _ inferInstance largerPost := by
+  intro heq
+  have hextra : @Pattern.semantics Conf inferInstance _ inferInstance
+      largerPost ⟨0, 2⟩ := by
+    refine ⟨fun n => (⟨n, 2⟩, True), ?_, ?_⟩
+    · simp [largerPost]
+    · exact ⟨0, rfl, True.intro⟩
+  have hpost : postImage (α := Conf) rules patt0 ⟨0, 2⟩ := by
+    rw [heq]
+    exact hextra
+  rw [computedPost_is_postImage] at hpost
+  simp [computedPost, Pattern.semantics] at hpost
+
+end ex1
 
 
 
