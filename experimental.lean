@@ -8,21 +8,50 @@ universe u v w x
 -- α is the type of states
 class State (α : Type u) : Prop where
 
--- P is a type of patterns denoting sets of α-states.
-class Pattern (α : Type u) [State α] (P : Type v) where
+-- P is a type of atomic patterns denoting sets of α-states.
+class AtPattern (α : Type u) [State α] (P : Type v) where
   semantics : P → α → Prop
 
-instance {α : Type u} [State α] : Pattern α (α × Prop) where
+instance {α : Type u} [State α] : AtPattern α (α × Prop) where
   semantics p state := p.fst = state ∧ p.snd
 
 instance {α : Type u} {A : Type v} {P : Type w}
-    [State α] [Pattern α P] : Pattern α (A → P) where
-  semantics p state := ∃ x, Pattern.semantics (p x) state
+    [State α] [AtPattern α P] : AtPattern α (A → P) where
+  semantics p state := ∃ x, AtPattern.semantics (p x) state
 
-instance {α : Type u} {P : Type v} [State α] [Pattern α P] :
-    Pattern α (List P) where
+-- P is either an atomic pattern or a disjunction of patterns.
+class Pattern (α : Type u) [State α] (P : Type v) where
+  semantics : P → α → Prop
+
+instance {α : Type u} {P : Type v} [State α] [AtPattern α P] :
+    Pattern α P where
+  semantics := AtPattern.semantics
+
+structure PatternDisjunction (P : Type v) (Q : Type w) where
+  left : P
+  right : Q
+
+scoped[Pattern] infixr:65 " ⊔ " => framework.PatternDisjunction.mk
+
+instance {α : Type u} {P : Type v} {Q : Type w}
+    [State α] [Pattern α P] [Pattern α Q] :
+    Pattern α (PatternDisjunction P Q) where
   semantics patterns state :=
-    ∃ pattern ∈ patterns, Pattern.semantics pattern state
+    Pattern.semantics patterns.left state ∨
+    Pattern.semantics patterns.right state
+
+theorem Pattern.disjunction_assoc
+    {α : Type u} {P : Type v} {Q : Type w} {R : Type x}
+    [State α] [Pattern α P] [Pattern α Q] [Pattern α R]
+    (p : P) (q : Q) (r : R) (state : α) :
+    Pattern.semantics (PatternDisjunction.mk (PatternDisjunction.mk p q) r) state ↔
+      Pattern.semantics (PatternDisjunction.mk p (PatternDisjunction.mk q r)) state := by
+  change
+    (Pattern.semantics p state ∨ Pattern.semantics q state) ∨
+        Pattern.semantics r state ↔
+      Pattern.semantics p state ∨
+        (Pattern.semantics q state ∨ Pattern.semantics r state)
+  exact or_assoc
 
 
 
@@ -82,6 +111,7 @@ end framework
 namespace ex1
 
 open framework
+open scoped Pattern
 
 structure Conf where
   n : Nat
@@ -105,15 +135,15 @@ def rules : List (Nat → Conf × Conf × Prop) :=
 -- ((< 0, $1:Nat >) | ((true).NuITP-Bool)) \/
 -- ((< $2:Nat, s 0 >) | (true /\ s_^3(0) <= $2:Nat = (true).Bool)) \/
 -- ((< $3:Nat, 0 >) | (true /\ $3:Nat < s_^3(0) = (true).Bool))
-def computedPost : List (Nat → Conf × Prop) :=
-  [fun n => (⟨n, 0⟩, n < 3),
-   fun n => (⟨n, 1⟩, 3 ≤ n)]
+def computedPost :=
+  (fun n : Nat => ((⟨n, 0⟩ : Conf), n < 3)) ⊔
+  (fun n m : Nat => ((⟨n, 1⟩ : Conf), 3 ≤ n ∧ m = 0))
 
 theorem computedPost_is_postImage :
     postImage (α := Conf) rules patt0 =
       @Pattern.semantics Conf inferInstance _ inferInstance computedPost := by
   funext state
-  simp [postImage, Pattern.semantics, Rule.semantics,
+  simp [postImage, AtPattern.semantics, Pattern.semantics, Rule.semantics,
     Conf.mk.injEq, rules, patt0, rule1, rule2,
     computedPost]
   constructor
@@ -125,16 +155,15 @@ theorem computedPost_is_postImage :
     · exact ⟨a, Or.inr ha⟩
 
 -- A sound but non-minimal over-approximation with an extra branch.
-def largerPost : List (Nat → Conf × Prop) :=
-  computedPost ++ [fun n => (⟨n, 2⟩, True)]
+def largerPost :=
+  computedPost ⊔ (fun n : Nat => ((⟨n, 2⟩ : Conf), True))
 
 theorem rules_map_patt0_into_largerPost :
     mapsInto (α := Conf) rules patt0 largerPost := by
   rw [mapsInto_iff_postImage_subset]
   intro state hpost
   rw [computedPost_is_postImage] at hpost
-  obtain ⟨pattern, hmem, hstate⟩ := hpost
-  exact ⟨pattern, by simp [largerPost, hmem], hstate⟩
+  exact Or.inl hpost
 
 theorem largerPost_is_not_postImage :
     postImage (α := Conf) rules patt0 ≠
@@ -142,14 +171,13 @@ theorem largerPost_is_not_postImage :
   intro heq
   have hextra : @Pattern.semantics Conf inferInstance _ inferInstance
       largerPost ⟨0, 2⟩ := by
-    refine ⟨fun n => (⟨n, 2⟩, True), ?_, ?_⟩
-    · simp [largerPost]
-    · exact ⟨0, rfl, True.intro⟩
+    exact Or.inr ⟨0, rfl, True.intro⟩
   have hpost : postImage (α := Conf) rules patt0 ⟨0, 2⟩ := by
     rw [heq]
     exact hextra
   rw [computedPost_is_postImage] at hpost
-  simp [computedPost, Pattern.semantics] at hpost
+  simp [computedPost, AtPattern.semantics, Pattern.semantics,
+    Conf.mk.injEq] at hpost
 
 end ex1
 
