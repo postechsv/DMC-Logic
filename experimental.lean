@@ -209,6 +209,126 @@ theorem largerPost_is_not_postImage :
 end ex1
 
 
+namespace ex2
+
+open framework
+
+structure Conf where
+  n : Multiset Nat
+
+instance : State Conf := ⟨⟩
+
+def pat (X Y : Multiset Nat) : Conf × Prop :=
+  ⟨⟨X + Y + {2}⟩, True⟩
+
+def rule (Z : Multiset Nat) : Conf × Conf × Prop :=
+  ⟨⟨{1} + Z⟩, ⟨Z⟩, True⟩
+
+def computedPost (W : Multiset Nat) : Conf × Prop :=
+  ⟨⟨W + {2}⟩, True⟩
+
+theorem computedPost_is_postImage :
+    postImage (α := Conf) rule pat =
+      Pattern.denotes computedPost := by
+  funext after
+  simp [postImage, Pattern.denotes, AtPattern.semantics, Pattern.semantics,
+    AtRule.semantics, Rule.semantics, Conf.mk.injEq,
+    pat, rule, computedPost]
+  constructor
+  · rintro ⟨X, Y, Z, hac, hafter⟩
+    have hmem : 2 ∈ Z := by
+      have : 2 ∈ 1 ::ₘ Z := by
+        rw [hac]
+        simp
+      simpa using this
+    obtain ⟨W, hZ⟩ := Multiset.exists_cons_of_mem hmem
+    refine ⟨W, ?_⟩
+    rw [← hafter]
+    congr 1
+    rw [hZ, ← Multiset.singleton_add, Multiset.add_comm]
+  · rintro ⟨W, hafter⟩
+    refine ⟨{1}, W, W + {2}, ?_, hafter⟩
+    rw [← Multiset.singleton_add, Multiset.add_assoc]
+
+end ex2
+
+
+namespace ex3
+
+open framework
+open scoped Disjunction
+
+structure Conf where
+  source : Multiset Nat
+  left : Multiset Nat
+  right : Multiset Nat
+
+instance : State Conf := ⟨⟩
+
+def pat (Z : Multiset Nat) : Conf × Prop :=
+  ⟨⟨{1} + Z, ∅, ∅⟩, True⟩
+
+def rule (X Y : Multiset Nat) : Conf × Conf × Prop :=
+  ⟨⟨X + Y + {2}, ∅, ∅⟩, ⟨∅, X, Y⟩, True⟩
+
+def computedPost :=
+  (fun U₁ U₂ : Multiset Nat =>
+    ((⟨∅, U₂ + {1}, U₁⟩ : Conf), True)) ⊔
+  (fun U₁ U₂ : Multiset Nat =>
+    ((⟨∅, U₁, U₂ + {1}⟩ : Conf), True))
+
+theorem computedPost_is_postImage :
+    postImage (α := Conf) rule pat =
+      Pattern.denotes computedPost := by
+  funext after
+  simp [postImage, Pattern.denotes, AtPattern.semantics, Pattern.semantics,
+    AtRule.semantics, Rule.semantics, Conf.mk.injEq,
+    pat, rule, computedPost]
+  constructor
+  · rintro ⟨Z, X, Y, hac, rfl⟩
+    have hmem : 1 ∈ X + Y + {2} := by
+      rw [hac]
+      simp
+    have hXY : 1 ∈ X ∨ 1 ∈ Y := by
+      simpa using hmem
+    rcases hXY with hX | hY
+    · obtain ⟨U, hX⟩ := Multiset.exists_cons_of_mem hX
+      left
+      refine ⟨Y, U, ?_⟩
+      congr 1
+      rw [hX, ← Multiset.singleton_add, Multiset.add_comm]
+    · obtain ⟨U, hY⟩ := Multiset.exists_cons_of_mem hY
+      right
+      refine ⟨X, U, ?_⟩
+      congr 1
+      rw [hY, ← Multiset.singleton_add, Multiset.add_comm]
+  · rintro (⟨U₁, U₂, hafter⟩ | ⟨U₁, U₂, hafter⟩)
+    · refine ⟨U₁ + U₂ + {2}, U₂ + {1}, U₁, ?_, hafter⟩
+      rw [← Multiset.singleton_add]
+      calc
+        U₂ + {1} + U₁ + {2} = ({1} + U₂) + U₁ + {2} := by
+          rw [Multiset.add_comm U₂ {1}]
+        _ = {1} + (U₂ + U₁ + {2}) := by
+          rw [Multiset.add_assoc {1} U₂ U₁,
+            Multiset.add_assoc {1} (U₂ + U₁) {2}]
+        _ = {1} + (U₁ + U₂ + {2}) := by
+          rw [Multiset.add_comm U₂ U₁]
+    · refine ⟨U₁ + U₂ + {2}, U₁, U₂ + {1}, ?_, hafter⟩
+      rw [← Multiset.singleton_add]
+      calc
+        U₁ + (U₂ + {1}) + {2} = (U₂ + {1}) + U₁ + {2} := by
+          rw [Multiset.add_comm U₁ (U₂ + {1})]
+        _ = ({1} + U₂) + U₁ + {2} := by
+          rw [Multiset.add_comm U₂ {1}]
+        _ = {1} + (U₂ + U₁ + {2}) := by
+          rw [Multiset.add_assoc {1} U₂ U₁,
+            Multiset.add_assoc {1} (U₂ + U₁) {2}]
+        _ = {1} + (U₁ + U₂ + {2}) := by
+          rw [Multiset.add_comm U₂ U₁]
+
+end ex3
+
+
 
 
 namespace experimental
