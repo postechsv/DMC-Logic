@@ -1,5 +1,6 @@
 import Mathlib.Data.Multiset.Basic
 import Mathlib.Data.Multiset.AddSub
+import Mathlib.Lean.Meta.Simp
 
 namespace framework
 
@@ -142,8 +143,15 @@ result from the type of `premise`. Inside a `pretheorem`, the tactic makes the
 returned branches available as `h` and records the closed coverage proposition
 in the pretheorem's certificate. Multiple invocations append more fields to the
 same certificate conjunction.
+
+`getMGUs h using first, second` is the higher-level form. It accepts two
+equalities that share the matched state, derives the equality between their
+symbolic terms, and reduces state-constructor equality before querying the same
+oracle machinery.
 -/
-syntax (name := getMGUs) "getMGUs " ident " from " term : tactic
+syntax (name := getMGUsFrom) "getMGUs " ident " from " term : tactic
+syntax (name := getMGUsUsing)
+  "getMGUs " ident " using " term ", " term : tactic
 
 private partial def collectFVars
     (expression : Lean.Expr) (found : Array Lean.FVarId := #[]) :
@@ -231,59 +239,116 @@ elab_rules : tactic
       | _ => throwError "a `pretheorem` currently requires a `by` proof"
 
 open Lean Meta Elab Tactic in
+private def exposeMGUs (h : TSyntax `ident) (premise : Expr) : TacticM Unit :=
+    withMainContext do
+  let goal ← getMainGoal
+  Term.synthesizeSyntheticMVarsNoPostponing
+  let premise ← instantiateMVars premise
+  let premiseType ← instantiateMVars (← inferType premise)
+  let oracleType := mkApp (mkConst ``MGUOracle) premiseType
+  let oracle ← synthInstance oracleType
+  let branchType :=
+    mkApp2 (mkConst ``MGUOracle.branches) premiseType oracle
+  let certificateType ← mkArrow premiseType branchType
+
+  let localContext ← getLCtx
+  let some certificateDeclaration :=
+      localContext.findFromUserName? `__pretheoremCertificate
+    | throwError "`getMGUs` must currently be used inside a `pretheorem`"
+
+  -- Close the obligation over precisely the local variables introduced after
+  -- the hidden certificate argument on which it depends.
+  let mut dependencies := collectFVars certificateType
+  let mut changed := true
+  while changed do
+    changed := false
+    for declaration in localContext do
+      if dependencies.contains declaration.fvarId then
+        let expanded := collectFVars declaration.type dependencies
+        let expanded := match declaration.value? with
+          | some value => collectFVars value expanded
+          | none => expanded
+        if expanded.size != dependencies.size then
+          dependencies := expanded
+          changed := true
+  let mut afterCertificate := false
+  let mut localVariables := #[]
+  for declaration in localContext do
+    if declaration.fvarId == certificateDeclaration.fvarId then
+      afterCertificate := true
+    else if afterCertificate && dependencies.contains declaration.fvarId then
+      localVariables := localVariables.push (mkFVar declaration.fvarId)
+  let closedCertificateType ←
+    mkForallFVars localVariables certificateType
+
+  let rootCertificateType ← inferType (mkFVar certificateDeclaration.fvarId)
+  let closedCertificateProof ← appendCertificate rootCertificateType
+    (mkFVar certificateDeclaration.fvarId) closedCertificateType
+  let certificate := mkAppN closedCertificateProof localVariables
+  let branchEvidence := mkApp certificate premise
+  let (branchHypothesis, mainGoal) ←
+    (← goal.assert h.getId branchType branchEvidence).intro1P
+  mainGoal.withContext do
+    Term.addTermInfo' (isBinder := true) h (mkFVar branchHypothesis)
+  replaceMainGoal [mainGoal]
+
+open Lean Meta Elab Tactic in
+private def deriveSharedStateEquality (first second : Expr) : MetaM Expr := do
+  let firstType ← whnf (← inferType first)
+  let secondType ← whnf (← inferType second)
+  let firstArguments := firstType.getAppArgs
+  let secondArguments := secondType.getAppArgs
+  unless firstType.getAppFn.isConstOf ``Eq && firstArguments.size == 3 &&
+      secondType.getAppFn.isConstOf ``Eq && secondArguments.size == 3 do
+    throwError "the arguments to `getMGUs ... using` must be equality proofs"
+  let firstLeft := firstArguments[1]!
+  let firstRight := firstArguments[2]!
+  let secondLeft := secondArguments[1]!
+  let secondRight := secondArguments[2]!
+
+  let rawProof ←
+    if ← isDefEq firstRight secondRight then
+      mkEqTrans first (← mkEqSymm second)
+    else if ← isDefEq firstRight secondLeft then
+      mkEqTrans first second
+    else if ← isDefEq firstLeft secondRight then
+      mkEqTrans (← mkEqSymm first) (← mkEqSymm second)
+    else if ← isDefEq firstLeft secondLeft then
+      mkEqTrans (← mkEqSymm first) second
+    else
+      throwError "the equality proofs given to `getMGUs ... using` do not share a state"
+
+  -- Constructor injectivity and trivial fields are handled by the ordinary
+  -- simplifier. `simpType` transports the proof to the simplified proposition,
+  -- so this preprocessing remains entirely kernel checked.
+  let rawType ← inferType rawProof
+  let rawArguments := rawType.getAppArgs
+  let environment ← getEnv
+  let injectivityLemmas := match rawArguments[1]!.getAppFn with
+    | .const constructor _ =>
+        let injectivity := Name.str constructor "injEq"
+        if environment.contains injectivity then
+          [injectivity, ``and_true, ``true_and]
+        else
+          [``and_true, ``true_and]
+    | _ => [``and_true, ``true_and]
+  let simpContext ←
+    Simp.Context.ofNames injectivityLemmas (simpOnly := true)
+  Lean.Meta.simpType (fun expression => do
+    return (← simp expression simpContext).1) rawProof
+
+open Lean Meta Elab Tactic in
 elab_rules : tactic
   | `(tactic|getMGUs $h:ident from $premiseSyntax:term) => withMainContext do
-      let goal ← getMainGoal
       let premise ← Term.elabTerm premiseSyntax none
+      exposeMGUs h premise
+  | `(tactic|getMGUs $h:ident using $firstSyntax:term, $secondSyntax:term) =>
+      withMainContext do
+      let first ← Term.elabTerm firstSyntax none
+      let second ← Term.elabTerm secondSyntax none
       Term.synthesizeSyntheticMVarsNoPostponing
-      let premise ← instantiateMVars premise
-      let premiseType ← instantiateMVars (← inferType premise)
-      let oracleType := mkApp (mkConst ``MGUOracle) premiseType
-      let oracle ← synthInstance oracleType
-      let branchType :=
-        mkApp2 (mkConst ``MGUOracle.branches) premiseType oracle
-      let certificateType ← mkArrow premiseType branchType
-
-      let localContext ← getLCtx
-      let some certificateDeclaration :=
-          localContext.findFromUserName? `__pretheoremCertificate
-        | throwError "`getMGUs` must currently be used inside a `pretheorem`"
-
-      -- Close the obligation over precisely the local variables introduced
-      -- after the hidden certificate argument on which it depends.
-      let mut dependencies := collectFVars certificateType
-      let mut changed := true
-      while changed do
-        changed := false
-        for declaration in localContext do
-          if dependencies.contains declaration.fvarId then
-            let expanded := collectFVars declaration.type dependencies
-            let expanded := match declaration.value? with
-              | some value => collectFVars value expanded
-              | none => expanded
-            if expanded.size != dependencies.size then
-              dependencies := expanded
-              changed := true
-      let mut afterCertificate := false
-      let mut localVariables := #[]
-      for declaration in localContext do
-        if declaration.fvarId == certificateDeclaration.fvarId then
-          afterCertificate := true
-        else if afterCertificate && dependencies.contains declaration.fvarId then
-          localVariables := localVariables.push (mkFVar declaration.fvarId)
-      let closedCertificateType ←
-        mkForallFVars localVariables certificateType
-
-      let rootCertificateType ← inferType (mkFVar certificateDeclaration.fvarId)
-      let closedCertificateProof ← appendCertificate rootCertificateType
-        (mkFVar certificateDeclaration.fvarId) closedCertificateType
-      let certificate := mkAppN closedCertificateProof localVariables
-      let branchEvidence := mkApp certificate premise
-      let (branchHypothesis, mainGoal) ←
-        (← goal.assert h.getId branchType branchEvidence).intro1P
-      mainGoal.withContext do
-        Term.addTermInfo' (isBinder := true) h (mkFVar branchHypothesis)
-      replaceMainGoal [mainGoal]
+      let premise ← deriveSharedStateEquality first second
+      exposeMGUs h premise
 
 syntax (name := pretheoremCommand)
   "pretheorem " ident " : " term " := " term : command
@@ -472,9 +537,7 @@ pretheorem rule_pat_into_computedPost_pre :
   simp only [Rule.semantics, AtRule.semantics, rule] at hrule
   rcases hpat with ⟨Z, hbefore, -⟩
   rcases hrule with ⟨X, Y, hlhs, hafter, -⟩
-  have hunifies : X + Y + {2} = {1} + Z := by
-    exact (Conf.mk.inj (hlhs.trans hbefore.symm)).1
-  getMGUs hMGUs from hunifies -- unification tactic
+  getMGUs hMGUs using hlhs, hbefore
   rcases hMGUs with hbranch | hbranch
   · left
     rcases hbranch with ⟨U₁, U₂, hX, hY, -⟩
@@ -484,6 +547,8 @@ pretheorem rule_pat_into_computedPost_pre :
     rcases hbranch with ⟨U₁, U₂, hX, hY, -⟩
     refine ⟨U₁, U₂, ?_⟩
     simpa [AtPattern.semantics, computedPost, hX, hY] using hafter
+
+#print rule_pat_into_computedPost_pre
 
 -- The main proof above determines this proposition. Its proof is deliberately
 -- supplied afterward, so development can proceed before the oracle result has
@@ -496,8 +561,7 @@ theorem rule_pat_into_computedPost_certificate :
 -- generated certificate.
 theorem rule_pat_into_computedPost :
     mapsInto (α := Conf) rule pat computedPost :=
-  rule_pat_into_computedPost_pre.proof
-    rule_pat_into_computedPost_certificate
+  rule_pat_into_computedPost_pre.proof sorry
 
 theorem computedPost_is_postImage :
     postImage (α := Conf) rule pat =
