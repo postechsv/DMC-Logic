@@ -10,7 +10,7 @@ universe u v w x
 class State (α : Type u) : Prop where
 
 -- P is a type of atomic patterns denoting sets of α-states.
-class AtPattern (α : Type u) [State α] (P : Type v) where
+class AtPattern (α : outParam (Type u)) [State α] (P : Type v) where
   semantics : P → α → Prop
 
 instance {α : Type u} [State α] : AtPattern α (α × Prop) where
@@ -21,7 +21,7 @@ instance {α : Type u} {A : Type v} {P : Type w}
   semantics p state := ∃ x, AtPattern.semantics (p x) state
 
 -- P is either an atomic pattern or a disjunction of patterns.
-class Pattern (α : Type u) [State α] (P : Type v) where
+class Pattern (α : outParam (Type u)) [State α] (P : Type v) where
   semantics : P → α → Prop
 
 def Pattern.denotes
@@ -62,7 +62,7 @@ theorem Pattern.disjunction_assoc
 
 
 -- R is a type of atomic rules denoting transitions between α-states.
-class AtRule (α : Type u) [State α] (R : Type v) where
+class AtRule (α : outParam (Type u)) [State α] (R : Type v) where
   semantics : R → α → α → Prop
 
 instance {α : Type u} [State α] : AtRule α (α × α × Prop) where
@@ -74,7 +74,7 @@ instance {α : Type u} {A : Type v} {R : Type w}
   semantics r before after := ∃ x, AtRule.semantics (r x) before after
 
 -- R is either an atomic rule or a disjunction of rules.
-class Rule (α : Type u) [State α] (R : Type v) where
+class Rule (α : outParam (Type u)) [State α] (R : Type v) where
   semantics : R → α → α → Prop
 
 instance {α : Type u} {R : Type v} [State α] [AtRule α R] :
@@ -549,7 +549,7 @@ private instance dummyACResult (X Y Z : Multiset Nat) :
 
 --- pretheorem: unknown_certificate → rule(pat) ⊑ computedPost
 pretheorem rule_pat_into_computedPost_pre :
-    mapsInto (α := Conf) rule pat computedPost := by
+    mapsInto rule pat computedPost := by
   getMGUs unifier matching rule against pat
   · left
     rcases unifier with ⟨U₁, U₂, hX, hY, -⟩
@@ -565,7 +565,7 @@ pretheorem rule_pat_into_computedPost_pre :
 --- providing certificate promotes pretheorems to theorems
 --- theorem: rule(pat) ⊑ computedPost
 theorem rule_pat_into_computedPost :
-    mapsInto (α := Conf) rule pat computedPost :=
+    mapsInto rule pat computedPost :=
   rule_pat_into_computedPost_pre.proof sorry
 
 
@@ -711,7 +711,7 @@ def largerPost :=
   computedPost ⊔ (fun n : Nat => ((⟨n, 2⟩ : Conf), True))
 
 theorem rules_map_patt0_into_largerPost :
-    mapsInto (α := Conf) rules patt0 largerPost := by
+    mapsInto rules patt0 largerPost := by
   rw [mapsInto_iff_postImage_subset]
   intro state hpost
   rw [computedPost_is_postImage] at hpost
