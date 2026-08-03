@@ -148,10 +148,16 @@ same certificate conjunction.
 equalities that share the matched state, derives the equality between their
 symbolic terms, and reduces state-constructor equality before querying the same
 oracle machinery.
+
+`getMGUs h matching rule against pattern` is the tuple-level form intended for
+users. At a `mapsInto` goal it opens both closure encodings, performs the
+semantic bookkeeping internally, and rewrites the target state to the rule RHS.
 -/
 syntax (name := getMGUsFrom) "getMGUs " ident " from " term : tactic
 syntax (name := getMGUsUsing)
   "getMGUs " ident " using " term ", " term : tactic
+syntax (name := getMGUsMatching)
+  "getMGUs " ident " matching " term " against " term : tactic
 
 private partial def collectFVars
     (expression : Lean.Expr) (found : Array Lean.FVarId := #[]) :
@@ -193,6 +199,40 @@ private partial def closeCertificate (certificateType : Expr) : MetaM Unit := do
     closeCertificate arguments[1]!
   else
     throwError "malformed pretheorem certificate accumulator"
+
+open Lean Meta in
+private def closureBinderNames : Expr → List Name
+  | .lam name _ body _ => name :: closureBinderNames body
+  | _ => []
+
+open Lean Meta in
+private partial def unpackExistentials
+    (goal : MVarId) (hypothesis : FVarId) (binderNames : List Name) :
+    MetaM (MVarId × FVarId) :=
+  goal.withContext do
+    let hypothesisType ← whnf (← inferType (mkFVar hypothesis))
+    unless hypothesisType.getAppFn.isConstOf ``Exists do
+      return (goal, hypothesis)
+    let subgoals ← goal.cases hypothesis
+    let [subgoal] := subgoals.toList
+      | throwError "unexpected branching while opening a pattern or rule closure"
+    let some field := subgoal.fields.back?
+      | throwError "failed to expose a closure body"
+    let .fvar bodyHypothesis := field
+      | throwError "failed to expose a closure body"
+    let goal ← match binderNames, subgoal.fields.toList with
+      | name :: _, .fvar witness :: _ => subgoal.mvarId.rename witness name
+      | _, _ => pure subgoal.mvarId
+    unpackExistentials goal bodyHypothesis binderNames.tail
+
+open Lean Meta in
+private def andProjections (proof : Expr) : MetaM (Expr × Expr) := do
+  let type ← whnf (← inferType proof)
+  let arguments := type.getAppArgs
+  unless type.getAppFn.isConstOf ``And && arguments.size == 2 do
+    throwError "expected the atomic tuple semantics to be a conjunction"
+  return (mkApp3 (mkConst ``And.left) arguments[0]! arguments[1]! proof,
+    mkApp3 (mkConst ``And.right) arguments[0]! arguments[1]! proof)
 
 syntax (name := startPretheorem) "startPretheorem" : tactic
 syntax (name := finishPretheorem) "finishPretheorem" : tactic
@@ -349,6 +389,65 @@ elab_rules : tactic
       Term.synthesizeSyntheticMVarsNoPostponing
       let premise ← deriveSharedStateEquality first second
       exposeMGUs h premise
+  | `(tactic|getMGUs $h:ident matching $ruleSyntax:term against $patternSyntax:term) => do
+      -- Traverse the existing recursive semantics for closure arguments until
+      -- the encoded atomic tuple is reached.
+      let (patternBinderNames, ruleBinderNames) ← withMainContext do
+        let pattern ← Term.elabTerm patternSyntax none
+        let rule ← Term.elabTerm ruleSyntax none
+        let pattern ← withTransparency .all <| whnf pattern
+        let rule ← withTransparency .all <| whnf rule
+        return (closureBinderNames pattern, closureBinderNames rule)
+      withMainContext do
+        let goal ← getMainGoal
+        let (_, goal) ← goal.intro `__before
+        let (_, goal) ← goal.intro `__after
+        let (_, goal) ← goal.intro `__patternSemantics
+        let (_, goal) ← goal.intro `__ruleSemantics
+        replaceMainGoal [goal]
+      let patternHypothesis := mkIdent `__patternSemantics
+      let ruleHypothesis := mkIdent `__ruleSemantics
+      let simplifySemantics ←
+        `(tactic| simp only [Pattern.semantics, AtPattern.semantics, Rule.semantics, AtRule.semantics, $patternSyntax:term, $ruleSyntax:term] at $patternHypothesis:ident $ruleHypothesis:ident)
+      evalTactic simplifySemantics
+
+      let (patternBody, ruleBody) ← withMainContext do
+        let goal ← getMainGoal
+        let localContext ← getLCtx
+        let some patternDeclaration :=
+            localContext.findFromUserName? `__patternSemantics
+          | throwError "failed to find the pattern-semantics hypothesis"
+        let (goal, patternBody) ←
+          unpackExistentials goal patternDeclaration.fvarId patternBinderNames
+        let ruleDeclaration ← goal.withContext do
+          let some declaration :=
+              (← getLCtx).findFromUserName? `__ruleSemantics
+            | throwError "failed to find the rule-semantics hypothesis"
+          return declaration
+        let (goal, ruleBody) ←
+          unpackExistentials goal ruleDeclaration.fvarId ruleBinderNames
+        replaceMainGoal [goal]
+        return (patternBody, ruleBody)
+
+      withMainContext do
+        let patternProof := mkFVar patternBody
+        let ruleProof := mkFVar ruleBody
+        let (patternStateEquality, _) ← andProjections patternProof
+        let (ruleLhsEquality, ruleTail) ← andProjections ruleProof
+        let (ruleRhsEquality, _) ← andProjections ruleTail
+        let premise ←
+          deriveSharedStateEquality ruleLhsEquality patternStateEquality
+        exposeMGUs h premise
+
+        -- Replace the concrete `after` state by the rule's symbolic RHS. The
+        -- remaining goal is now stated solely in tuple-level symbolic terms.
+        let goal ← getMainGoal
+        let ruleRhsType ← inferType ruleRhsEquality
+        let (_, goal) ←
+          (← goal.assert `__ruleRhsEquality ruleRhsType ruleRhsEquality).intro1P
+        replaceMainGoal [goal]
+      let after := mkIdent `__after
+      evalTactic (← `(tactic| subst $after:ident))
 
 syntax (name := pretheoremCommand)
   "pretheorem " ident " : " term " := " term : command
@@ -529,26 +628,28 @@ private instance dummyACResult (X Y Z : Multiset Nat) :
     (∃ U₁ U₂ : Multiset Nat,
       X = U₁ ∧ Y = U₂ + {1} ∧ Z = U₁ + U₂ + {2})
 
---- rule(pat) ⊑ computedPost
+--- pretheorem: unknown_certificate → rule(pat) ⊑ computedPost
 pretheorem rule_pat_into_computedPost_pre :
     mapsInto (α := Conf) rule pat computedPost := by
-  intro before after hpat hrule
-  simp only [Pattern.semantics, AtPattern.semantics, pat] at hpat
-  simp only [Rule.semantics, AtRule.semantics, rule] at hrule
-  rcases hpat with ⟨Z, hbefore, -⟩
-  rcases hrule with ⟨X, Y, hlhs, hafter, -⟩
-  getMGUs hMGUs using hlhs, hbefore
+  getMGUs hMGUs matching rule against pat
   rcases hMGUs with hbranch | hbranch
   · left
     rcases hbranch with ⟨U₁, U₂, hX, hY, -⟩
     refine ⟨U₁, U₂, ?_⟩
-    simpa [AtPattern.semantics, computedPost, hX, hY] using hafter
+    simp [AtPattern.semantics, computedPost, hX, hY]
   · right
     rcases hbranch with ⟨U₁, U₂, hX, hY, -⟩
     refine ⟨U₁, U₂, ?_⟩
-    simpa [AtPattern.semantics, computedPost, hX, hY] using hafter
+    simp [AtPattern.semantics, computedPost, hX, hY]
 
 #print rule_pat_into_computedPost_pre
+
+--- providing certificate promotes pretheorems to theorems
+--- theorem: rule(pat) ⊑ computedPost
+theorem rule_pat_into_computedPost :
+    mapsInto (α := Conf) rule pat computedPost :=
+  rule_pat_into_computedPost_pre.proof sorry
+
 
 -- The main proof above determines this proposition. Its proof is deliberately
 -- supplied afterward, so development can proceed before the oracle result has
@@ -556,12 +657,6 @@ pretheorem rule_pat_into_computedPost_pre :
 theorem rule_pat_into_computedPost_certificate :
     rule_pat_into_computedPost_pre.Certificate := by
   sorry
-
--- Promotion to an ordinary Lean theorem happens only after supplying the
--- generated certificate.
-theorem rule_pat_into_computedPost :
-    mapsInto (α := Conf) rule pat computedPost :=
-  rule_pat_into_computedPost_pre.proof sorry
 
 theorem computedPost_is_postImage :
     postImage (α := Conf) rule pat =
