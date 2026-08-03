@@ -119,6 +119,30 @@ def mapsInto
     Rule.semantics r before after →
     Pattern.semantics target after
 
+-- An oracle result associates a unification premise with the proposition that
+-- describes all branches returned for it.  The associated proposition is not
+-- supplied at a `getMGUs` call site.
+class MGUOracle (premise : Prop) where
+  branches : Prop
+
+-- Certification is a separate registration.  Consequently an oracle result
+-- can be generated now and its coverage theorem supplied from another file
+-- later.  A closed theorem using `getMGUs` can only be checked once this
+-- certificate is available; no axiom or `sorry` bridges that boundary.
+class MGUCertificate (premise : Prop) [MGUOracle premise] : Prop where
+  complete : premise → MGUOracle.branches premise
+
+/-
+`getMGUs h from premise` is generic: instance synthesis selects the oracle
+result and its independently registered certificate from the type of
+`premise`.  The tactic itself exposes only the returned branch evidence `h`.
+-/
+syntax (name := getMGUs) "getMGUs " ident " from " term : tactic
+
+macro_rules
+  | `(tactic|getMGUs $h:ident from $premise:term) =>
+      `(tactic|have $h := MGUCertificate.complete (premise := _) $premise)
+
 -- Minimality of postImage (strongestness).
 theorem mapsInto_iff_postImage_subset
     {α : Type u} {P : Type v} {Q : Type w} {R : Type x}
@@ -277,33 +301,70 @@ def computedPost :=
   (fun U₁ U₂ : Multiset Nat =>
     ((⟨∅, U₁, U₂ + {1}⟩ : Conf), True))
 
--- The two AC-unifier branches that an eventual implementation of `getMGUs`
--- should compute for
---
---     X + Y + {2} = {1} + Z.
---
--- The residual variables `U₁` and `U₂` are the parameters of the
--- corresponding lambda closures in `computedPost`.
-def mguBranches (X Y Z : Multiset Nat) : Prop :=
-  (∃ U₁ U₂ : Multiset Nat,
-    X = U₂ + {1} ∧ Y = U₁ ∧ Z = U₁ + U₂ + {2}) ∨
-  (∃ U₁ U₂ : Multiset Nat,
-    X = U₁ ∧ Y = U₂ + {1} ∧ Z = U₁ + U₂ + {2})
+-- Dummy result currently returned by `getMGUs` for this shape of AC equation.
+-- It is registered with the generic tactic machinery rather than named or
+-- supplied by the `mapsInto` proof.
+private instance dummyACResult (X Y Z : Multiset Nat) :
+    MGUOracle (X + Y + {2} = {1} + Z) where
+  branches :=
+    (∃ U₁ U₂ : Multiset Nat,
+      X = U₂ + {1} ∧ Y = U₁ ∧ Z = U₁ + U₂ + {2}) ∨
+    (∃ U₁ U₂ : Multiset Nat,
+      X = U₁ ∧ Y = U₂ + {1} ∧ Z = U₁ + U₂ + {2})
 
--- What `mapsInto` needs from unification is only coverage: every solution of
--- the source equation factors through one of the reported branches.  It does
--- not need minimality or irredundancy of those branches.
-structure CompleteMGUs
-    (branches : Multiset Nat → Multiset Nat → Multiset Nat → Prop) : Prop where
-  complete : ∀ X Y Z,
-    X + Y + {2} = {1} + Z → branches X Y Z
+-- Certification is independent of the `mapsInto` proof.  In the eventual
+-- implementation this theorem can live in a generated certificate file.
+private theorem dummyACResult_complete (X Y Z : Multiset Nat) :
+    (X + Y + {2} = {1} + Z) →
+      MGUOracle.branches (X + Y + {2} = {1} + Z) := by
+  change (X + Y + {2} = {1} + Z) →
+    ((∃ U₁ U₂ : Multiset Nat,
+        X = U₂ + {1} ∧ Y = U₁ ∧ Z = U₁ + U₂ + {2}) ∨
+      (∃ U₁ U₂ : Multiset Nat,
+        X = U₁ ∧ Y = U₂ + {1} ∧ Z = U₁ + U₂ + {2}))
+  intro hcomplete
+  have hmem : 1 ∈ X + Y + {2} := by
+    rw [hcomplete]
+    simp
+  have hXY : 1 ∈ X ∨ 1 ∈ Y := by
+    simpa using hmem
+  rcases hXY with hX | hY
+  · obtain ⟨U₂, hX⟩ := Multiset.exists_cons_of_mem hX
+    have hX' : X = U₂ + {1} := by
+      rw [hX, ← Multiset.singleton_add, Multiset.add_comm]
+    left
+    refine ⟨Y, U₂, hX', rfl, ?_⟩
+    have hcancel : {1} + (Y + U₂ + {2}) = {1} + Z := by
+      calc
+        {1} + (Y + U₂ + {2}) = (U₂ + {1}) + Y + {2} := by
+          rw [← Multiset.add_assoc {1} (Y + U₂) {2},
+            Multiset.add_comm {1} (Y + U₂),
+            Multiset.add_assoc Y U₂ {1},
+            Multiset.add_comm Y (U₂ + {1})]
+        _ = X + Y + {2} := by rw [hX']
+        _ = {1} + Z := hcomplete
+    exact (Multiset.add_right_inj.mp hcancel).symm
+  · obtain ⟨U₂, hY⟩ := Multiset.exists_cons_of_mem hY
+    have hY' : Y = U₂ + {1} := by
+      rw [hY, ← Multiset.singleton_add, Multiset.add_comm]
+    right
+    refine ⟨X, U₂, rfl, hY', ?_⟩
+    have hcancel : {1} + (X + U₂ + {2}) = {1} + Z := by
+      calc
+        {1} + (X + U₂ + {2}) = X + (U₂ + {1}) + {2} := by
+          rw [← Multiset.add_assoc {1} (X + U₂) {2},
+            Multiset.add_comm {1} (X + U₂),
+            Multiset.add_assoc X U₂ {1}]
+        _ = X + Y + {2} := by rw [hY']
+        _ = {1} + Z := hcomplete
+    exact (Multiset.add_right_inj.mp hcancel).symm
 
--- Dummy external oracle.  There is intentionally no unification algorithm
--- here: the axiom directly supplies the desired branches together with the
--- sole certification fact used below.  Later this axiom can be replaced by a
--- checked Maude certificate without changing the `mapsInto` proof.
-axiom getMGUs : CompleteMGUs mguBranches
+private instance dummyACResult_certificate (X Y Z : Multiset Nat) :
+    MGUCertificate (X + Y + {2} = {1} + Z) where
+  complete := dummyACResult_complete X Y Z
 
+
+--- rule(pat) ⊑ computedPost
 theorem rule_maps_pat_into_computedPost_via_getMGUs :
     mapsInto (α := Conf) rule pat computedPost := by
   intro before after hpat hrule
@@ -313,7 +374,8 @@ theorem rule_maps_pat_into_computedPost_via_getMGUs :
   rcases hrule with ⟨X, Y, hlhs, hafter, -⟩
   have hunifies : X + Y + {2} = {1} + Z := by
     exact (Conf.mk.inj (hlhs.trans hbefore.symm)).1
-  rcases getMGUs.complete X Y Z hunifies with hbranch | hbranch
+  getMGUs hMGUs from hunifies
+  rcases hMGUs with hbranch | hbranch
   · left
     rcases hbranch with ⟨U₁, U₂, hX, hY, -⟩
     refine ⟨U₁, U₂, ?_⟩
@@ -322,6 +384,10 @@ theorem rule_maps_pat_into_computedPost_via_getMGUs :
     rcases hbranch with ⟨U₁, U₂, hX, hY, -⟩
     refine ⟨U₁, U₂, ?_⟩
     simpa [AtPattern.semantics, computedPost, hX, hY] using hafter
+
+
+
+
 
 theorem computedPost_is_postImage :
     postImage (α := Conf) rule pat =
