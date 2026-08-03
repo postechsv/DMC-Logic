@@ -120,6 +120,27 @@ def mapsInto
     Rule.semantics r before after →
     Pattern.semantics target after
 
+-- Minimality of postImage (strongestness).
+theorem mapsInto_iff_postImage_subset
+    {α : Type u} {P : Type v} {Q : Type w} {R : Type x}
+    [State α] [Pattern α P] [Pattern α Q] [Rule α R]
+    (r : R) (patt0 : P) (target : Q) :
+    mapsInto (α := α) r patt0 target ↔
+      ∀ (after : α), postImage (α := α) r patt0 after →
+        Pattern.semantics target after := by
+  constructor
+  · rintro h after ⟨before, hpatt0, hstep⟩
+    exact h before after hpatt0 hstep
+  · intro h before after hpatt0 hstep
+    exact h after ⟨before, hpatt0, hstep⟩
+
+end framework
+
+
+namespace tactics
+
+open framework
+
 -- An oracle result associates a unification premise with the proposition that
 -- describes all branches returned for it.  The associated proposition is not
 -- supplied at a `getMGUs` call site.
@@ -487,143 +508,13 @@ macro_rules
           · runPretheoremProof $proof
           · finishPretheorem)
 
--- Minimality of postImage (strongestness).
-theorem mapsInto_iff_postImage_subset
-    {α : Type u} {P : Type v} {Q : Type w} {R : Type x}
-    [State α] [Pattern α P] [Pattern α Q] [Rule α R]
-    (r : R) (patt0 : P) (target : Q) :
-    mapsInto (α := α) r patt0 target ↔
-      ∀ (after : α), postImage (α := α) r patt0 after →
-        Pattern.semantics target after := by
-  constructor
-  · rintro h after ⟨before, hpatt0, hstep⟩
-    exact h before after hpatt0 hstep
-  · intro h before after hpatt0 hstep
-    exact h after ⟨before, hpatt0, hstep⟩
-
-end framework
-
-
-namespace ex1
-
-open framework
-open scoped Disjunction
-
-structure Conf where
-  n : Nat
-  m : Nat
-
-instance : State Conf := ⟨⟩
-
-def patt0 (n : Nat) : Conf × Prop :=
-  (⟨0, n⟩, True)
-
-def rule1 (n : Nat) : Conf × Conf × Prop :=
-  ⟨⟨0, n⟩, ⟨n, 0⟩, n < 3⟩
-
-def rule2 (n m : Nat) : Conf × Conf × Prop :=
-  ⟨⟨0, n⟩, ⟨n, 1⟩, 3 ≤ n ∧ m = 0⟩
-
-def rules :=
-  rule1 ⊔ rule2
-
-def computedPost :=
-  (fun n : Nat => ((⟨n, 0⟩ : Conf), n < 3)) ⊔
-  (fun n m : Nat => ((⟨n, 1⟩ : Conf), 3 ≤ n ∧ m = 0))
-
-#print computedPost
-
-theorem computedPost_is_postImage :
-    postImage (α := Conf) rules patt0 =
-      Pattern.denotes computedPost := by
-  funext state
-  simp [postImage, Pattern.denotes, AtPattern.semantics, Pattern.semantics,
-    AtRule.semantics, Rule.semantics,
-    Conf.mk.injEq, rules, patt0, rule1, rule2,
-    computedPost]
-  constructor
-  · rintro ⟨a, ha | ha⟩
-    · exact Or.inl ⟨a, ha⟩
-    · exact Or.inr ⟨a, ha⟩
-  · rintro (⟨a, ha⟩ | ⟨a, ha⟩)
-    · exact ⟨a, Or.inl ha⟩
-    · exact ⟨a, Or.inr ha⟩
-
--- A sound but non-minimal over-approximation with an extra branch.
-def largerPost :=
-  computedPost ⊔ (fun n : Nat => ((⟨n, 2⟩ : Conf), True))
-
-theorem rules_map_patt0_into_largerPost :
-    mapsInto (α := Conf) rules patt0 largerPost := by
-  rw [mapsInto_iff_postImage_subset]
-  intro state hpost
-  rw [computedPost_is_postImage] at hpost
-  exact Or.inl hpost
-
-theorem largerPost_is_not_postImage :
-    postImage (α := Conf) rules patt0 ≠
-      Pattern.denotes largerPost := by
-  intro heq
-  have hextra : Pattern.denotes largerPost (⟨0, 2⟩ : Conf) := by
-    simp [Pattern.denotes, largerPost, computedPost,
-      AtPattern.semantics, Pattern.semantics, Conf.mk.injEq]
-  have hpost : postImage (α := Conf) rules patt0 ⟨0, 2⟩ := by
-    rw [heq]
-    exact hextra
-  rw [computedPost_is_postImage] at hpost
-  simp [Pattern.denotes, computedPost, AtPattern.semantics, Pattern.semantics,
-    Conf.mk.injEq] at hpost
-
-end ex1
-
-
-namespace ex2
-
-open framework
-
-structure Conf where
-  n : Multiset Nat
-
-instance : State Conf := ⟨⟩
-
-def pat (X Y : Multiset Nat) : Conf × Prop :=
-  ⟨⟨X + Y + {2}⟩, True⟩
-
-def rule (Z : Multiset Nat) : Conf × Conf × Prop :=
-  ⟨⟨{1} + Z⟩, ⟨Z⟩, True⟩
-
-def computedPost (W : Multiset Nat) : Conf × Prop :=
-  ⟨⟨W + {2}⟩, True⟩
-
-theorem computedPost_is_postImage :
-    postImage (α := Conf) rule pat =
-      Pattern.denotes computedPost := by
-  funext after
-  simp [postImage, Pattern.denotes, AtPattern.semantics, Pattern.semantics,
-    AtRule.semantics, Rule.semantics, Conf.mk.injEq,
-    pat, rule, computedPost]
-  constructor
-  · rintro ⟨X, Y, Z, hac, hafter⟩
-    have hmem : 2 ∈ Z := by
-      have : 2 ∈ 1 ::ₘ Z := by
-        rw [hac]
-        simp
-      simpa using this
-    obtain ⟨W, hZ⟩ := Multiset.exists_cons_of_mem hmem
-    refine ⟨W, ?_⟩
-    rw [← hafter]
-    congr 1
-    rw [hZ, ← Multiset.singleton_add, Multiset.add_comm]
-  · rintro ⟨W, hafter⟩
-    refine ⟨{1}, W, W + {2}, ?_, hafter⟩
-    rw [← Multiset.singleton_add, Multiset.add_assoc]
-
-end ex2
+end tactics
 
 
 namespace ex3
 
 open framework
+open tactics
 open scoped Disjunction
 
 structure Conf where
@@ -764,6 +655,129 @@ theorem computedPost_is_postImage :
           rw [Multiset.add_comm U₂ U₁]
 
 end ex3
+
+
+
+
+
+
+namespace ex1
+
+open framework
+open scoped Disjunction
+
+structure Conf where
+  n : Nat
+  m : Nat
+
+instance : State Conf := ⟨⟩
+
+def patt0 (n : Nat) : Conf × Prop :=
+  (⟨0, n⟩, True)
+
+def rule1 (n : Nat) : Conf × Conf × Prop :=
+  ⟨⟨0, n⟩, ⟨n, 0⟩, n < 3⟩
+
+def rule2 (n m : Nat) : Conf × Conf × Prop :=
+  ⟨⟨0, n⟩, ⟨n, 1⟩, 3 ≤ n ∧ m = 0⟩
+
+def rules :=
+  rule1 ⊔ rule2
+
+def computedPost :=
+  (fun n : Nat => ((⟨n, 0⟩ : Conf), n < 3)) ⊔
+  (fun n m : Nat => ((⟨n, 1⟩ : Conf), 3 ≤ n ∧ m = 0))
+
+#print computedPost
+
+theorem computedPost_is_postImage :
+    postImage (α := Conf) rules patt0 =
+      Pattern.denotes computedPost := by
+  funext state
+  simp [postImage, Pattern.denotes, AtPattern.semantics, Pattern.semantics,
+    AtRule.semantics, Rule.semantics,
+    Conf.mk.injEq, rules, patt0, rule1, rule2,
+    computedPost]
+  constructor
+  · rintro ⟨a, ha | ha⟩
+    · exact Or.inl ⟨a, ha⟩
+    · exact Or.inr ⟨a, ha⟩
+  · rintro (⟨a, ha⟩ | ⟨a, ha⟩)
+    · exact ⟨a, Or.inl ha⟩
+    · exact ⟨a, Or.inr ha⟩
+
+-- A sound but non-minimal over-approximation with an extra branch.
+def largerPost :=
+  computedPost ⊔ (fun n : Nat => ((⟨n, 2⟩ : Conf), True))
+
+theorem rules_map_patt0_into_largerPost :
+    mapsInto (α := Conf) rules patt0 largerPost := by
+  rw [mapsInto_iff_postImage_subset]
+  intro state hpost
+  rw [computedPost_is_postImage] at hpost
+  exact Or.inl hpost
+
+theorem largerPost_is_not_postImage :
+    postImage (α := Conf) rules patt0 ≠
+      Pattern.denotes largerPost := by
+  intro heq
+  have hextra : Pattern.denotes largerPost (⟨0, 2⟩ : Conf) := by
+    simp [Pattern.denotes, largerPost, computedPost,
+      AtPattern.semantics, Pattern.semantics, Conf.mk.injEq]
+  have hpost : postImage (α := Conf) rules patt0 ⟨0, 2⟩ := by
+    rw [heq]
+    exact hextra
+  rw [computedPost_is_postImage] at hpost
+  simp [Pattern.denotes, computedPost, AtPattern.semantics, Pattern.semantics,
+    Conf.mk.injEq] at hpost
+
+end ex1
+
+
+namespace ex2
+
+open framework
+
+structure Conf where
+  n : Multiset Nat
+
+instance : State Conf := ⟨⟩
+
+def pat (X Y : Multiset Nat) : Conf × Prop :=
+  ⟨⟨X + Y + {2}⟩, True⟩
+
+def rule (Z : Multiset Nat) : Conf × Conf × Prop :=
+  ⟨⟨{1} + Z⟩, ⟨Z⟩, True⟩
+
+def computedPost (W : Multiset Nat) : Conf × Prop :=
+  ⟨⟨W + {2}⟩, True⟩
+
+theorem computedPost_is_postImage :
+    postImage (α := Conf) rule pat =
+      Pattern.denotes computedPost := by
+  funext after
+  simp [postImage, Pattern.denotes, AtPattern.semantics, Pattern.semantics,
+    AtRule.semantics, Rule.semantics, Conf.mk.injEq,
+    pat, rule, computedPost]
+  constructor
+  · rintro ⟨X, Y, Z, hac, hafter⟩
+    have hmem : 2 ∈ Z := by
+      have : 2 ∈ 1 ::ₘ Z := by
+        rw [hac]
+        simp
+      simpa using this
+    obtain ⟨W, hZ⟩ := Multiset.exists_cons_of_mem hmem
+    refine ⟨W, ?_⟩
+    rw [← hafter]
+    congr 1
+    rw [hZ, ← Multiset.singleton_add, Multiset.add_comm]
+  · rintro ⟨W, hafter⟩
+    refine ⟨{1}, W, W + {2}, ?_, hafter⟩
+    rw [← Multiset.singleton_add, Multiset.add_assoc]
+
+end ex2
+
+
 
 
 
