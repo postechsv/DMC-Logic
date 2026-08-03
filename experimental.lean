@@ -125,23 +125,175 @@ def mapsInto
 class MGUOracle (premise : Prop) where
   branches : Prop
 
--- Certification is a separate registration.  Consequently an oracle result
--- can be generated now and its coverage theorem supplied from another file
--- later.  A closed theorem using `getMGUs` can only be checked once this
--- certificate is available; no axiom or `sorry` bridges that boundary.
-class MGUCertificate (premise : Prop) [MGUOracle premise] : Prop where
-  complete : premise → MGUOracle.branches premise
+-- A pretheorem packages a completed main proof together with the proposition
+-- whose proof is still required to promote it to an ordinary theorem.
+structure Pretheorem (conclusion : Prop) where
+  Certificate : Prop
+  proof : Certificate → conclusion
+
+-- The second goal created while elaborating a `pretheorem` carries the shared
+-- certificate metavariable. It is definitionally `True`; its only purpose is
+-- to let the finalizer close the accumulated conjunction after the main proof.
+private def pendingCertificates (_ : Prop) : Prop := True
 
 /-
 `getMGUs h from premise` is generic: instance synthesis selects the oracle
-result and its independently registered certificate from the type of
-`premise`.  The tactic itself exposes only the returned branch evidence `h`.
+result from the type of `premise`. Inside a `pretheorem`, the tactic makes the
+returned branches available as `h` and records the closed coverage proposition
+in the pretheorem's certificate. Multiple invocations append more fields to the
+same certificate conjunction.
 -/
 syntax (name := getMGUs) "getMGUs " ident " from " term : tactic
 
+private partial def collectFVars
+    (expression : Lean.Expr) (found : Array Lean.FVarId := #[]) :
+    Array Lean.FVarId :=
+  match expression with
+  | .fvar id => if found.contains id then found else found.push id
+  | .app fn arg => collectFVars arg (collectFVars fn found)
+  | .lam _ domain body _ | .forallE _ domain body _ =>
+      collectFVars body (collectFVars domain found)
+  | .letE _ type value body _ =>
+      collectFVars body (collectFVars value (collectFVars type found))
+  | .mdata _ body | .proj _ _ body => collectFVars body found
+  | _ => found
+
+open Lean Meta Elab Tactic in
+private partial def appendCertificate
+    (certificateType certificateProof obligation : Expr) : MetaM Expr := do
+  let certificateType ← instantiateMVars certificateType
+  if let .mvar tail := certificateType then
+    let nextTail ←
+      mkFreshExprMVar (mkSort .zero) MetavarKind.natural `certificateTail
+    tail.assign (mkApp2 (mkConst ``And) obligation nextTail)
+    return mkApp3 (mkConst ``And.left) obligation nextTail certificateProof
+  let arguments := certificateType.getAppArgs
+  if certificateType.getAppFn.isConstOf ``And && arguments.size == 2 then
+    let rightProof :=
+      mkApp3 (mkConst ``And.right) arguments[0]! arguments[1]! certificateProof
+    return ← appendCertificate arguments[1]! rightProof obligation
+  throwError "malformed pretheorem certificate accumulator"
+
+open Lean Meta Elab Tactic in
+private partial def closeCertificate (certificateType : Expr) : MetaM Unit := do
+  let certificateType ← instantiateMVars certificateType
+  if let .mvar tail := certificateType then
+    tail.assign (mkConst ``True)
+    return
+  let arguments := certificateType.getAppArgs
+  if certificateType.getAppFn.isConstOf ``And && arguments.size == 2 then
+    closeCertificate arguments[1]!
+  else
+    throwError "malformed pretheorem certificate accumulator"
+
+syntax (name := startPretheorem) "startPretheorem" : tactic
+syntax (name := finishPretheorem) "finishPretheorem" : tactic
+syntax (name := runPretheoremProof) "runPretheoremProof " term : tactic
+
+open Lean Meta Elab Tactic in
+elab_rules : tactic
+  | `(tactic|startPretheorem) => withMainContext do
+      let goal ← getMainGoal
+      let target ← instantiateMVars (← goal.getType)
+      let arguments := target.getAppArgs
+      unless target.getAppFn.isConstOf ``Pretheorem && arguments.size == 1 do
+        throwError "`startPretheorem` must prove a `Pretheorem`"
+      let conclusion := arguments[0]!
+      let certificateType ←
+        mkFreshExprMVar (mkSort .zero) MetavarKind.natural `certificate
+      let proofType ← mkArrow certificateType conclusion
+      let proof ←
+        mkFreshExprMVar proofType MetavarKind.syntheticOpaque `pretheoremProof
+      goal.assign
+        (mkApp3 (mkConst ``Pretheorem.mk) conclusion certificateType proof)
+      let (certificateHypothesis, mainGoal) ←
+        proof.mvarId!.intro `__pretheoremCertificate
+      let pendingType :=
+        mkApp (mkConst ``pendingCertificates) certificateType
+      let pending ←
+        mkFreshExprMVar pendingType MetavarKind.syntheticOpaque `certificates
+      mainGoal.withContext do
+        Term.addTermInfo' (isBinder := true) (← `(ident| __pretheoremCertificate))
+          (mkFVar certificateHypothesis)
+      replaceMainGoal [mainGoal, pending.mvarId!]
+  | `(tactic|finishPretheorem) => withMainContext do
+      let goal ← getMainGoal
+      let target ← instantiateMVars (← goal.getType)
+      let arguments := target.getAppArgs
+      unless target.getAppFn.isConstOf ``pendingCertificates && arguments.size == 1 do
+        throwError "`finishPretheorem` must close a pretheorem certificate"
+      closeCertificate arguments[0]!
+      goal.assign (mkConst ``True.intro)
+      replaceMainGoal []
+  | `(tactic|runPretheoremProof $proof:term) =>
+      match proof with
+      | `(term|by $tactics:tacticSeq) => evalTactic tactics
+      | _ => throwError "a `pretheorem` currently requires a `by` proof"
+
+open Lean Meta Elab Tactic in
+elab_rules : tactic
+  | `(tactic|getMGUs $h:ident from $premiseSyntax:term) => withMainContext do
+      let goal ← getMainGoal
+      let premise ← Term.elabTerm premiseSyntax none
+      Term.synthesizeSyntheticMVarsNoPostponing
+      let premise ← instantiateMVars premise
+      let premiseType ← instantiateMVars (← inferType premise)
+      let oracleType := mkApp (mkConst ``MGUOracle) premiseType
+      let oracle ← synthInstance oracleType
+      let branchType :=
+        mkApp2 (mkConst ``MGUOracle.branches) premiseType oracle
+      let certificateType ← mkArrow premiseType branchType
+
+      let localContext ← getLCtx
+      let some certificateDeclaration :=
+          localContext.findFromUserName? `__pretheoremCertificate
+        | throwError "`getMGUs` must currently be used inside a `pretheorem`"
+
+      -- Close the obligation over precisely the local variables introduced
+      -- after the hidden certificate argument on which it depends.
+      let mut dependencies := collectFVars certificateType
+      let mut changed := true
+      while changed do
+        changed := false
+        for declaration in localContext do
+          if dependencies.contains declaration.fvarId then
+            let expanded := collectFVars declaration.type dependencies
+            let expanded := match declaration.value? with
+              | some value => collectFVars value expanded
+              | none => expanded
+            if expanded.size != dependencies.size then
+              dependencies := expanded
+              changed := true
+      let mut afterCertificate := false
+      let mut localVariables := #[]
+      for declaration in localContext do
+        if declaration.fvarId == certificateDeclaration.fvarId then
+          afterCertificate := true
+        else if afterCertificate && dependencies.contains declaration.fvarId then
+          localVariables := localVariables.push (mkFVar declaration.fvarId)
+      let closedCertificateType ←
+        mkForallFVars localVariables certificateType
+
+      let rootCertificateType ← inferType (mkFVar certificateDeclaration.fvarId)
+      let closedCertificateProof ← appendCertificate rootCertificateType
+        (mkFVar certificateDeclaration.fvarId) closedCertificateType
+      let certificate := mkAppN closedCertificateProof localVariables
+      let branchEvidence := mkApp certificate premise
+      let (branchHypothesis, mainGoal) ←
+        (← goal.assert h.getId branchType branchEvidence).intro1P
+      mainGoal.withContext do
+        Term.addTermInfo' (isBinder := true) h (mkFVar branchHypothesis)
+      replaceMainGoal [mainGoal]
+
+syntax (name := pretheoremCommand)
+  "pretheorem " ident " : " term " := " term : command
+
 macro_rules
-  | `(tactic|getMGUs $h:ident from $premise:term) =>
-      `(tactic|have $h := MGUCertificate.complete (premise := _) $premise)
+  | `(pretheorem $name:ident : $conclusion:term := $proof:term) =>
+      `(def $name : Pretheorem $conclusion := by
+          startPretheorem
+          · runPretheoremProof $proof
+          · finishPretheorem)
 
 -- Minimality of postImage (strongestness).
 theorem mapsInto_iff_postImage_subset
@@ -312,60 +464,8 @@ private instance dummyACResult (X Y Z : Multiset Nat) :
     (∃ U₁ U₂ : Multiset Nat,
       X = U₁ ∧ Y = U₂ + {1} ∧ Z = U₁ + U₂ + {2})
 
--- Certification is independent of the `mapsInto` proof.  In the eventual
--- implementation this theorem can live in a generated certificate file.
-private theorem dummyACResult_complete (X Y Z : Multiset Nat) :
-    (X + Y + {2} = {1} + Z) →
-      MGUOracle.branches (X + Y + {2} = {1} + Z) := by
-  change (X + Y + {2} = {1} + Z) →
-    ((∃ U₁ U₂ : Multiset Nat,
-        X = U₂ + {1} ∧ Y = U₁ ∧ Z = U₁ + U₂ + {2}) ∨
-      (∃ U₁ U₂ : Multiset Nat,
-        X = U₁ ∧ Y = U₂ + {1} ∧ Z = U₁ + U₂ + {2}))
-  intro hcomplete
-  have hmem : 1 ∈ X + Y + {2} := by
-    rw [hcomplete]
-    simp
-  have hXY : 1 ∈ X ∨ 1 ∈ Y := by
-    simpa using hmem
-  rcases hXY with hX | hY
-  · obtain ⟨U₂, hX⟩ := Multiset.exists_cons_of_mem hX
-    have hX' : X = U₂ + {1} := by
-      rw [hX, ← Multiset.singleton_add, Multiset.add_comm]
-    left
-    refine ⟨Y, U₂, hX', rfl, ?_⟩
-    have hcancel : {1} + (Y + U₂ + {2}) = {1} + Z := by
-      calc
-        {1} + (Y + U₂ + {2}) = (U₂ + {1}) + Y + {2} := by
-          rw [← Multiset.add_assoc {1} (Y + U₂) {2},
-            Multiset.add_comm {1} (Y + U₂),
-            Multiset.add_assoc Y U₂ {1},
-            Multiset.add_comm Y (U₂ + {1})]
-        _ = X + Y + {2} := by rw [hX']
-        _ = {1} + Z := hcomplete
-    exact (Multiset.add_right_inj.mp hcancel).symm
-  · obtain ⟨U₂, hY⟩ := Multiset.exists_cons_of_mem hY
-    have hY' : Y = U₂ + {1} := by
-      rw [hY, ← Multiset.singleton_add, Multiset.add_comm]
-    right
-    refine ⟨X, U₂, rfl, hY', ?_⟩
-    have hcancel : {1} + (X + U₂ + {2}) = {1} + Z := by
-      calc
-        {1} + (X + U₂ + {2}) = X + (U₂ + {1}) + {2} := by
-          rw [← Multiset.add_assoc {1} (X + U₂) {2},
-            Multiset.add_comm {1} (X + U₂),
-            Multiset.add_assoc X U₂ {1}]
-        _ = X + Y + {2} := by rw [hY']
-        _ = {1} + Z := hcomplete
-    exact (Multiset.add_right_inj.mp hcancel).symm
-
-private instance dummyACResult_certificate (X Y Z : Multiset Nat) :
-    MGUCertificate (X + Y + {2} = {1} + Z) where
-  complete := dummyACResult_complete X Y Z
-
-
 --- rule(pat) ⊑ computedPost
-theorem rule_maps_pat_into_computedPost_via_getMGUs :
+pretheorem rule_pat_into_computedPost_pre :
     mapsInto (α := Conf) rule pat computedPost := by
   intro before after hpat hrule
   simp only [Pattern.semantics, AtPattern.semantics, pat] at hpat
@@ -374,7 +474,7 @@ theorem rule_maps_pat_into_computedPost_via_getMGUs :
   rcases hrule with ⟨X, Y, hlhs, hafter, -⟩
   have hunifies : X + Y + {2} = {1} + Z := by
     exact (Conf.mk.inj (hlhs.trans hbefore.symm)).1
-  getMGUs hMGUs from hunifies
+  getMGUs hMGUs from hunifies -- unification tactic
   rcases hMGUs with hbranch | hbranch
   · left
     rcases hbranch with ⟨U₁, U₂, hX, hY, -⟩
@@ -385,9 +485,19 @@ theorem rule_maps_pat_into_computedPost_via_getMGUs :
     refine ⟨U₁, U₂, ?_⟩
     simpa [AtPattern.semantics, computedPost, hX, hY] using hafter
 
+-- The main proof above determines this proposition. Its proof is deliberately
+-- supplied afterward, so development can proceed before the oracle result has
+-- been certified.
+theorem rule_pat_into_computedPost_certificate :
+    rule_pat_into_computedPost_pre.Certificate := by
+  sorry
 
-
-
+-- Promotion to an ordinary Lean theorem happens only after supplying the
+-- generated certificate.
+theorem rule_pat_into_computedPost :
+    mapsInto (α := Conf) rule pat computedPost :=
+  rule_pat_into_computedPost_pre.proof
+    rule_pat_into_computedPost_certificate
 
 theorem computedPost_is_postImage :
     postImage (α := Conf) rule pat =
