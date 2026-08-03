@@ -151,7 +151,9 @@ oracle machinery.
 
 `getMGUs h matching rule against pattern` is the tuple-level form intended for
 users. At a `mapsInto` goal it opens both closure encodings, performs the
-semantic bookkeeping internally, and rewrites the target state to the rule RHS.
+semantic bookkeeping internally, rewrites the target state to the rule RHS,
+and creates one goal per returned unifier branch. In every goal, `h` names the
+corresponding branch rather than the aggregate disjunction.
 -/
 syntax (name := getMGUsFrom) "getMGUs " ident " from " term : tactic
 syntax (name := getMGUsUsing)
@@ -233,6 +235,25 @@ private def andProjections (proof : Expr) : MetaM (Expr × Expr) := do
     throwError "expected the atomic tuple semantics to be a conjunction"
   return (mkApp3 (mkConst ``And.left) arguments[0]! arguments[1]! proof,
     mkApp3 (mkConst ``And.right) arguments[0]! arguments[1]! proof)
+
+open Lean Meta in
+private partial def splitUnifierBranches
+    (goal : MVarId) (hypothesis : FVarId) (branchName : Name) :
+    MetaM (List MVarId) :=
+  goal.withContext do
+    let hypothesisType ← whnf (← inferType (mkFVar hypothesis))
+    unless hypothesisType.getAppFn.isConstOf ``Or do
+      return [← goal.rename hypothesis branchName]
+    let subgoals ← goal.cases hypothesis
+    let mut branches := []
+    for subgoal in subgoals do
+      let some field := subgoal.fields.back?
+        | throwError "failed to expose an oracle branch"
+      let .fvar branchHypothesis := field
+        | throwError "failed to expose an oracle branch"
+      branches := branches ++
+        (← splitUnifierBranches subgoal.mvarId branchHypothesis branchName)
+    return branches
 
 syntax (name := startPretheorem) "startPretheorem" : tactic
 syntax (name := finishPretheorem) "finishPretheorem" : tactic
@@ -448,6 +469,13 @@ elab_rules : tactic
         replaceMainGoal [goal]
       let after := mkIdent `__after
       evalTactic (← `(tactic| subst $after:ident))
+      withMainContext do
+        let goal ← getMainGoal
+        let some oracleResult := (← getLCtx).findFromUserName? h.getId
+          | throwError "failed to find the oracle result"
+        let branches ←
+          splitUnifierBranches goal oracleResult.fvarId h.getId
+        replaceMainGoal branches
 
 syntax (name := pretheoremCommand)
   "pretheorem " ident " : " term " := " term : command
@@ -631,14 +659,13 @@ private instance dummyACResult (X Y Z : Multiset Nat) :
 --- pretheorem: unknown_certificate → rule(pat) ⊑ computedPost
 pretheorem rule_pat_into_computedPost_pre :
     mapsInto (α := Conf) rule pat computedPost := by
-  getMGUs hMGUs matching rule against pat
-  rcases hMGUs with hbranch | hbranch
+  getMGUs unifier matching rule against pat
   · left
-    rcases hbranch with ⟨U₁, U₂, hX, hY, -⟩
+    rcases unifier with ⟨U₁, U₂, hX, hY, -⟩
     refine ⟨U₁, U₂, ?_⟩
     simp [AtPattern.semantics, computedPost, hX, hY]
   · right
-    rcases hbranch with ⟨U₁, U₂, hX, hY, -⟩
+    rcases unifier with ⟨U₁, U₂, hX, hY, -⟩
     refine ⟨U₁, U₂, ?_⟩
     simp [AtPattern.semantics, computedPost, hX, hY]
 
