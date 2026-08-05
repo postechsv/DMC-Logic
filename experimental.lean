@@ -524,21 +524,23 @@ structure Conf where
 
 instance : State Conf := ⟨⟩
 
+-- pat = λ Z, ⟨⟨{1} + Z, ∅, ∅⟩, True⟩
 def pat (Z : Multiset Nat) : Conf × Prop :=
   ⟨⟨{1} + Z, ∅, ∅⟩, True⟩
 
+-- rule = λ X Y, ⟨⟨X + Y + {2}, ∅, ∅⟩, ⟨∅, X, Y⟩, True⟩
 def rule (X Y : Multiset Nat) : Conf × Conf × Prop :=
   ⟨⟨X + Y + {2}, ∅, ∅⟩, ⟨∅, X, Y⟩, True⟩
 
+--   λ U₁ U₂, ⟨⟨∅, U₂ + {1}, U₁⟩, True⟩
+-- ⊔ λ U₁ U₂, ⟨⟨∅, U₁, U₂ + {1}⟩, True⟩
 def computedPost :=
   (fun U₁ U₂ : Multiset Nat =>
     ((⟨∅, U₂ + {1}, U₁⟩ : Conf), True)) ⊔
   (fun U₁ U₂ : Multiset Nat =>
     ((⟨∅, U₁, U₂ + {1}⟩ : Conf), True))
 
--- Dummy result currently returned by `getMGUs` for this shape of AC equation.
--- It is registered with the generic tactic machinery rather than named or
--- supplied by the `mapsInto` proof.
+-- two unifiers for pat & rule.LHS
 private instance dummyACResult (X Y Z : Multiset Nat) :
     MGUOracle (X + Y + {2} = {1} + Z) where
   branches :=
@@ -547,10 +549,12 @@ private instance dummyACResult (X Y Z : Multiset Nat) :
     (∃ U₁ U₂ : Multiset Nat,
       X = U₁ ∧ Y = U₂ + {1} ∧ Z = U₁ + U₂ + {2})
 
---- pretheorem: unknown_certificate → rule(pat) ⊑ computedPost
+-- UNKNOWN → rule(pat) ⊑ computedPost
+-- UNKNOWN is elaborated by getMGUs tactic, "on-the-fly"
+-- trustbase: lean + getMGUs
 pretheorem rule_pat_into_computedPost_pre :
     mapsInto rule pat computedPost := by
-  getMGUs unifier matching rule against pat
+  getMGUs unifier matching rule against pat -- using "theory/multiset.maude"
   · left
     rcases unifier with ⟨U₁, U₂, hX, hY, -⟩
     refine ⟨U₁, U₂, ?_⟩
@@ -562,8 +566,9 @@ pretheorem rule_pat_into_computedPost_pre :
 
 #print rule_pat_into_computedPost_pre
 
---- providing certificate promotes pretheorems to theorems
---- theorem: rule(pat) ⊑ computedPost
+-- rule(pat) ⊑ computedPost
+-- UNKNOWN is discharged independently, "after the fact"
+-- trustbase: lean
 theorem rule_pat_into_computedPost :
     mapsInto rule pat computedPost :=
   rule_pat_into_computedPost_pre.proof sorry
