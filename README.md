@@ -1,6 +1,7 @@
 # PosCheck
 ## Pattern-Oriented Symbolic Model Checker
 - Inspired by DM-Check tool
+- conPanna (Constrained Pattern Narrowing)
 
 ## Examples
 Milestone examples
@@ -17,3 +18,7 @@ Working examples
 
 - ClientServer (depends on Bakery/DMC3.lean)
   - compositional verification (PComp)
+
+- pretheorem
+  - patterns & rules as lambda closures
+  - pretheorems for dynamic generation of proof obligations by getMGUs tactic
