@@ -549,6 +549,8 @@ private instance dummyACResult (X Y Z : Multiset Nat) :
     (∃ U₁ U₂ : Multiset Nat,
       X = U₁ ∧ Y = U₂ + {1} ∧ Z = U₁ + U₂ + {2})
 
+-- rule(pat) ⊑ computedPost /\ forall pat2 , rule(pat) ⊑ pat2 → computedPost ⊑ pat2
+
 -- UNKNOWN → rule(pat) ⊑ computedPost
 -- UNKNOWN is elaborated by getMGUs tactic, "on-the-fly"
 -- trustbase: lean + getMGUs
@@ -563,6 +565,7 @@ pretheorem rule_pat_into_computedPost_pre :
     rcases unifier with ⟨U₁, U₂, hX, hY, -⟩
     refine ⟨U₁, U₂, ?_⟩
     simp [AtPattern.semantics, computedPost, hX, hY]
+
 
 #print rule_pat_into_computedPost_pre
 
