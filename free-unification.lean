@@ -33,83 +33,12 @@ infix:50 " ⋈ " => Unifiable
 end framework
 
 
-namespace ex2
-
--- f(x1, x2) = f(f(y1, y2), c)
--- x1 = f(u1, u2)
--- x2 = c
--- y1 = u1
--- y2 = u2
-
-inductive Term where
-  | c : Term
-  | f : Term → Term → Term
-  deriving Repr
-
-open Term
-
-
-
-
-def pat1 (x1 x2 : Term) : Term :=
-  f x1 x2
-#print pat1
-
-def pat2 (y1 y2 : Term) : Term :=
-  f (f y1 y2) c
-#print pat2
-
-
--- ALL original pattern variables are implicit holes.
-def compute_uniform_unifiers {x1 x2 y1 y2 : Term}
-  (eq : pat1 x1 x2 = pat2 y1 y2) :
-  Term × Term × Term × Term :=
-  (x1, x2, y1, y2)
-
--- We introduce the fresh basis variables u1 and u2.
--- We explicitly bind the independent variables (y1, y2) to the basis.
--- We pass `rfl`, forcing Lean to compute the dependent variables (x1, x2).
-def uniform_mgu (u1 u2 : Term) :=
-  compute_uniform_unifiers (y1 := u1) (y2 := u2) rfl
-
-#reduce uniform_mgu
-
-
-/--
-  All three variables are implicit holes.
-  The equation is beautifully cross-coupled.
--/
-def compute_ground_mgu {x1 y1 y2 : Term}
-  (eq : f x1 (f c y2) = f (f y1 c) x1) :
-  Term × Term × Term :=
-  (x1, y1, y2)
-
--- Lean's unifier cascades through the substitutions automatically.
-def ground_mgu := compute_ground_mgu rfl
-
-#reduce ground_mgu
--- (Term.f Term.c Term.c, Term.c, Term.c)
-
-
-end ex2
 
 
 namespace free_unification
 
 open Lean Meta Elab Term Tactic
 open framework
-
--- 1. Standard Domain AST (No 'var' constructor needed)
-inductive Conf where
-  | c : Conf
-  | f : Conf → Conf → Conf
-  deriving Repr
-instance : State Conf := ⟨⟩
-open Conf
-
-
-
-
 
 namespace Unification
 
@@ -713,8 +642,33 @@ original pattern argument.  On failure it closes the goal by contradiction.
 elab "unify " h:ident : tactic =>
   Unification.Tactic.run h.raw h
 
+end free_unification
 
--- The examples intentionally come after the tactic implementation.
+
+
+
+
+
+
+
+namespace examples
+
+open framework
+open free_unification
+
+-- User-defined model for the examples.  It is deliberately not part of the
+-- generic free-unification implementation, and it needs no `var` constructor.
+inductive Conf where
+  | c : Conf
+  | f : Conf → Conf → Conf
+  deriving Repr
+
+instance : State Conf := ⟨⟩
+
+open Conf
+
+-- The examples intentionally live outside the implementation namespace and
+-- come after the tactic implementation.
 
 def pat1 (x1 x2 : Conf) : Conf := f x1 x2
 def pat2 (y1 : Conf) : Conf := f (f y1 c) c
@@ -825,88 +779,4 @@ example
   unify h
 
 
-
-
-
-
-
-
-
-
-
-
-example (a b : Nat) : ∃ x y, x + y = a + b := by
-  -- We introduce existential holes for x and y.
-  -- Lean internally names these holes ?x and ?y (Metavariables).
-  refine ⟨?x, ?y, ?eq⟩
-  case eq =>
-    exact rfl
-
-end free_unification
-
-
-
-
-
-
-namespace triangular_blowup
--- Triangular Blowup (or "Prolog's Nightmare")
--- P(x1, x2, x3, x4) = P(f(x2, x2), f(x3, x3), f(x4, x4), c)
-
-inductive Term where
-  | c : Term
-  | f : Term → Term → Term
-  deriving Repr
-
-inductive Pred where
-  | p : Term → Term → Term → Term → Pred
-  deriving Repr
-
-open Term Pred
-
-def get_unified_x1 {x1 x2 x3 x4 : Term}
-  (eq : p x1 x2 x3 x4 = p (f x2 x2) (f x3 x3) (f x4 x4) c) : Term :=
-  x1
-
-#eval get_unified_x1 rfl
-
--- this example only make sense when variables are shared
-
-def pat1 (x1 x2 x3 x4 : Term) : Pred :=
-  p x1 x2 x3 x4
-#print pat1
-
-def pat2 (x2 x3 x4 : Term) : Pred :=
-  p (f x2 x2) (f x3 x3) (f x4 x4) c
-#print pat2
-
--- what does unify pat1 pat2 mean? It means..
--- λ LHS.x1, LHS.x2, LHS.x3, LHS.x4, RHS.x2, RHS.x3, RHS.x4,
---   pat1 LHS.x1 LHS.x2 LHS.x3 LHS.x4 = pat2 RHS.x2 RHS.x3 RHS.x4
--- something like..
-def unif_pat1_pat2 (x1 x2 x3 x4 y2 y3 y4: Term) : Prop :=
-  p x1 x2 x3 x4 = p (f y2 y2) (f y3 y3) (f y4 y4) c
-
--- pat1 = pat2 doesn't make sense because e.g.
--- λ x1 x2, ⟨ x1, x2 ⟩ ≠ λ y, ⟨ 0, y ⟩
--- but we still want to unify them
--- (pat1 & pat2 do not share variables!)
-
-
-/-- Same extraction function as before -/
-def compute_unifiers (y2 y3 y4 : Term) {x1 x2 x3 x4 : Term}
-  (eq : pat1 x1 x2 x3 x4 = pat2 y2 y3 y4) :
-  Term × Term × Term × Term :=
-  (x1, x2, x3, x4)
-
-/--
-  We wrap the computation in a new function that takes Lean's native
-  variables (y2, y3, y4). By passing `rfl`, Lean's unifier silently
-  computes the `x` variables in terms of the `y` variables.
--/
-def unifier_function (y2 y3 y4 : Term) :=
-  compute_unifiers y2 y3 y4 rfl
-
--- We use #reduce to inspect the evaluated body of the function.
-#reduce unifier_function
-end triangular_blowup
+end examples
