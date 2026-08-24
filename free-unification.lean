@@ -8,6 +8,58 @@ universe u v w x y
 -- α is the type of states
 class State (α : Type u) : Prop where
 
+/-!
+## Equational presentations
+
+These declarations belong to the framework rather than to unification.
+Unification, narrowing, and later reachability procedures are clients of the
+same presentation.
+-/
+
+/--
+An equation schema indexed by the operation to which it belongs.  The index
+prevents, for example, attaching a proof about `f` to the declaration of `g`.
+Only the individual schema constructors impose an arity requirement.
+-/
+inductive Axiom : {operationType : Type u} →
+    (operation : operationType) → Type (u + 1) where
+  | commutative {α : Type u} {operation : α → α → α}
+      (proof : ∀ left right, operation left right = operation right left) :
+      Axiom operation
+  | associative {α : Type u} {operation : α → α → α}
+      (proof : ∀ first second third,
+        operation (operation first second) third =
+          operation first (operation second third)) :
+      Axiom operation
+
+namespace Axiom
+
+def commutativeOfInstance {α : Type u} (operation : α → α → α)
+    [Std.Commutative operation] : Axiom operation :=
+  .commutative Std.Commutative.comm
+
+def associativeOfInstance {α : Type u} (operation : α → α → α)
+    [Std.Associative operation] : Axiom operation :=
+  .associative Std.Associative.assoc
+
+end Axiom
+
+/-- One symbol of any arity; its complete signature is its inferred Lean type. -/
+structure Symbol where
+  {operationType : Type u}
+  operation : operationType
+  axioms : List (Axiom operation) := []
+
+/-- Uniform declaration constructor for nullary through arbitrary-arity symbols. -/
+def Symbol.declare {operationType : Type u} (operation : operationType)
+    (axioms : List (Axiom operation) := []) : Symbol where
+  operation := operation
+  axioms := axioms
+
+/-- The equational component shared by unification and rewriting procedures. -/
+structure EqModule where
+  symbols : List (Symbol.{u}) := []
+
 -- P is a type of atomic patterns denoting sets of α-states.
 class AtPattern (α : outParam (Type u)) [State α] (P : Type v) where
   semantics : P → α → Prop
@@ -70,6 +122,19 @@ def Unifiable {α : Type u} {P : Type v} {Q : Type w}
   ∃ state, AtPattern.semantics p state ∧ AtPattern.semantics q state
 
 infix:50 " ⋈ " => Unifiable
+
+/--
+Unifiability relative to an equational presentation.  Its denotation remains
+semantic intersection; the presentation tells automation which equations it
+may use when constructing and certifying the intersection witness.
+-/
+def UnifiableIn {α : Type u} {P : Type v} {Q : Type w}
+    [State α] [AtPattern α P] [AtPattern α Q]
+    (_presentation : EqModule) (left : P) (right : Q) : Prop :=
+  Unifiable left right
+
+notation:50 left " ⋈[" presentation "] " right =>
+  UnifiableIn presentation left right
 
 /-- The body returned by a constrained rewrite-rule closure. -/
 structure RuleBody (α : Type u) where
@@ -192,68 +257,6 @@ namespace Unification
 universe u v w
 
 /-!
-## Equational modules
-
-This is the kernel-visible half of the eventual user/framework contract.
-Theory selection is per symbol, not global: a module may contain free, C, and
-AC symbols simultaneously.  The selected laws carry their Lean proofs.
-Symbols absent from `binarySymbols` are treated as free.
-
-The elaborator-facing registry and `unify ... in ...` dispatch are built on
-top of these declarations; they do not replace this logical data.
--/
-
-/-- The prototype theories supported for a binary symbol. -/
-inductive BinaryTheory {α : Type u} (operation : α → α → α) : Type u where
-  | free
-  | c (comm : ∀ left right, operation left right = operation right left)
-  | ac
-      (assoc : ∀ first second third,
-        operation (operation first second) third =
-          operation first (operation second third))
-      (comm : ∀ left right, operation left right = operation right left)
-
-namespace BinaryTheory
-
-/-- Select C while obtaining its proof from Lean's standard law class. -/
-def cOfInstance {α : Type u} (operation : α → α → α)
-    [Std.Commutative operation] : BinaryTheory operation :=
-  .c Std.Commutative.comm
-
-/-- Select AC while obtaining both proofs from Lean's standard law classes. -/
-def acOfInstances {α : Type u} (operation : α → α → α)
-    [Std.Associative operation] [Std.Commutative operation] :
-    BinaryTheory operation :=
-  .ac Std.Associative.assoc Std.Commutative.comm
-
-end BinaryTheory
-
-/-- One module-local declaration of a binary operation and its selected theory. -/
-structure BinarySymbol (α : Type u) where
-  operation : α → α → α
-  theory : BinaryTheory operation
-
-/--
-The equational part of a module.  Rewrite rules intentionally do not occur
-here, so unification remains independent of the rule layer.
--/
-structure Module (α : Type u) where
-  binarySymbols : List (BinarySymbol α) := []
-
-/--
-Module-indexed unifiability.  The first prototype reuses the existing atomic
-pattern semantics; indexing the proposition now ensures that the selected
-presentation is explicit in theorem statements and available to tactics.
--/
-def UnifiableIn {α : Type u} {P : Type v} {Q : Type w}
-    [State α] [AtPattern α P] [AtPattern α Q]
-    (_module : Module α) (left : P) (right : Q) : Prop :=
-  framework.Unifiable left right
-
-notation:50 left " ⋈[" module "] " right =>
-  UnifiableIn module left right
-
-/-!
 The implementation is intentionally split into namespaces that can later
 become files.  `Problem` knows how to read Lean pattern closures, `Certificate`
 is the solver-neutral output format, `Free` is the native free-unification
@@ -270,7 +273,7 @@ structure SaturatedPattern where
 
 /-- The first-order equation sent to a unification backend. -/
 structure Input where
-  module? : Option Expr := none
+  presentation? : Option Expr := none
   lhs : SaturatedPattern
   rhs : SaturatedPattern
 
@@ -293,22 +296,23 @@ def saturatePattern (pattern : Expr) : MetaM SaturatedPattern := do
     argumentNames
   }
 
-/-- Extract the optional module and two patterns from a unifiability proposition. -/
+/-- Extract the optional presentation and two patterns from a unifiability proposition. -/
 def ofUnifiableType (type : Expr) : MetaM Input := do
   let type ← instantiateMVars type
   let arguments := type.getAppArgs
   let isDefault := type.getAppFn.isConstOf ``Unifiable
-  let isModuleIndexed := type.getAppFn.isConstOf ``UnifiableIn
+  let isPresentationIndexed :=
+    type.getAppFn.isConstOf ``framework.UnifiableIn
   unless (isDefault && arguments.size >= 2) ||
-      (isModuleIndexed && arguments.size >= 3) do
+      (isPresentationIndexed && arguments.size >= 3) do
     throwError "expected a hypothesis of the form `p ⋈ q`"
   let lhs ← saturatePattern arguments[arguments.size - 2]!
   let rhs ← saturatePattern arguments[arguments.size - 1]!
-  let module? := if isModuleIndexed then
+  let presentation? := if isPresentationIndexed then
       some arguments[arguments.size - 3]!
     else
       none
-  return { module?, lhs, rhs }
+  return { presentation?, lhs, rhs }
 
 def argumentCount (problem : Input) : Nat :=
   problem.lhs.arguments.size + problem.rhs.arguments.size
@@ -319,34 +323,57 @@ def symbolicArguments (problem : Input) : Array Expr :=
 end Problem
 
 
-namespace ModuleElaboration
+namespace PresentationElaboration
 
 inductive Backend where
   | free
   | c
 
-/-- Read the selected prototype backend from a kernel-level module value. -/
+/-- Read the axiom kinds attached to one declared symbol. -/
+private partial def scanAxioms (axioms : Expr)
+    (foundAssociative foundCommutative : Bool) : MetaM (Bool × Bool) := do
+  let axioms ← withTransparency .all <| whnf axioms
+  let arguments := axioms.getAppArgs
+  if axioms.getAppFn.isConstOf ``List.nil then
+    return (foundAssociative, foundCommutative)
+  unless axioms.getAppFn.isConstOf ``List.cons && arguments.size >= 3 do
+    throwError "could not reduce a symbol's axiom declarations"
+  let axiomExpr := arguments[arguments.size - 2]!
+  let tail := arguments[arguments.size - 1]!
+  let axiomExpr ← withTransparency .all <| whnf axiomExpr
+  let isAssociative :=
+    axiomExpr.getAppFn.isConstOf ``framework.Axiom.associative
+  let isCommutative :=
+    axiomExpr.getAppFn.isConstOf ``framework.Axiom.commutative
+  unless isAssociative || isCommutative do
+    throwError "the presentation contains an unrecognized axiom kind"
+  scanAxioms tail (foundAssociative || isAssociative)
+    (foundCommutative || isCommutative)
+
+/-- Select a prototype backend from an arbitrary-arity symbol list. -/
 private partial def scanSymbols (symbols : Expr) (foundC : Bool) : MetaM Backend := do
   let symbols ← withTransparency .all <| whnf symbols
   let arguments := symbols.getAppArgs
   if symbols.getAppFn.isConstOf ``List.nil then
     return if foundC then .c else .free
   unless symbols.getAppFn.isConstOf ``List.cons && arguments.size >= 3 do
-    throwError "could not reduce the module's binary-symbol declarations"
+    throwError "could not reduce the presentation's symbol declarations"
   let symbol := arguments[arguments.size - 2]!
   let tail := arguments[arguments.size - 1]!
-  let theory ← withTransparency .all <|
-    whnf (← mkAppM ``BinarySymbol.theory #[symbol])
-  if theory.getAppFn.isConstOf ``BinaryTheory.ac then
+  let axioms ← mkAppM ``framework.Symbol.axioms #[symbol]
+  let (hasAssociative, hasCommutative) ← scanAxioms axioms false false
+  if hasAssociative && hasCommutative then
     throwError "the AC backend is not implemented in this prototype"
-  let foundC := foundC || theory.getAppFn.isConstOf ``BinaryTheory.c
+  if hasAssociative then
+    throwError "the associative-unification backend is not implemented in this prototype"
+  let foundC := foundC || hasCommutative
   scanSymbols tail foundC
 
-def backend (module : Expr) : MetaM Backend := do
-  let symbols ← mkAppM ``Module.binarySymbols #[module]
+def backend (presentation : Expr) : MetaM Backend := do
+  let symbols ← mkAppM ``framework.EqModule.symbols #[presentation]
   scanSymbols symbols false
 
-end ModuleElaboration
+end PresentationElaboration
 
 
 namespace Certificate
@@ -1081,25 +1108,29 @@ def runC (ref : Syntax) (h : Ident) : TacticM Unit :=
     ref h
 
 /--
-Resolve an explicit module from a module-indexed unifiability hypothesis and
-dispatch to the first prototype backend selected by that module.
+Resolve an explicit equational presentation from an indexed unifiability
+hypothesis and dispatch to the prototype backend selected by its axioms.
 -/
-def runIn (ref : Syntax) (h : Ident) (moduleSyntax : TSyntax `term) :
+def runIn (ref : Syntax) (h : Ident) (presentationSyntax : TSyntax `term) :
     TacticM Unit := do
   let hypothesisId ← getFVarId h
   let hypothesisType ← instantiateMVars (← hypothesisId.getType)
   let goal ← getMainGoal
   let problem ← goal.withContext do
     Problem.ofUnifiableType hypothesisType
-  let some declaredModule := problem.module?
-    | throwErrorAt h "`unify ... in ...` requires a hypothesis `p ⋈[A] q`"
-  let requestedModule ← goal.withContext do
-    Term.elabTerm moduleSyntax.raw (some (← inferType declaredModule))
-  let modulesMatch ← goal.withContext do
-    withoutModifyingState (isDefEq requestedModule declaredModule)
-  unless modulesMatch do
-    throwErrorAt moduleSyntax "the requested module does not match the module in the hypothesis"
-  match ← goal.withContext do ModuleElaboration.backend requestedModule with
+  let some declaredPresentation := problem.presentation?
+    | throwErrorAt h "`unify ... in ...` requires a hypothesis `p ⋈[M] q`"
+  let requestedPresentation ← goal.withContext do
+    Term.elabTerm presentationSyntax.raw
+      (some (← inferType declaredPresentation))
+  let presentationsMatch ← goal.withContext do
+    withoutModifyingState
+      (isDefEq requestedPresentation declaredPresentation)
+  unless presentationsMatch do
+    throwErrorAt presentationSyntax
+      "the requested presentation does not match the presentation in the hypothesis"
+  match ← goal.withContext do
+      PresentationElaboration.backend requestedPresentation with
   | .free => run ref h
   | .c => runC ref h
 
@@ -1124,8 +1155,8 @@ elab "c_unify " h:ident : tactic =>
   Unification.Tactic.runC h.raw h
 
 /-- Unify using the equational presentation explicitly named by the user. -/
-elab "unify " h:ident " in " module:term : tactic =>
-  Unification.Tactic.runIn h.raw h module
+elab "unify " h:ident " in " presentation:term : tactic =>
+  Unification.Tactic.runIn h.raw h presentation
 
 
 namespace Narrowing
@@ -1468,7 +1499,7 @@ inductive Conf where
 instance : State Conf := ⟨⟩
 
 /-- An empty presentation: every symbol is free. -/
-def FreeModule : Unification.Module Conf := {}
+def FreePresentation : framework.EqModule := {}
 
 open Conf
 
@@ -1502,9 +1533,9 @@ example (h : pat1 ⋈ pat2) : True := by
   guard_hyp h3 : y1 = u1
   exact True.intro
 
--- The explicit module form has the same public result interface.
-example (h : pat1 ⋈[FreeModule] pat2) : True := by
-  unify h in FreeModule
+-- The explicit-presentation form has the same public result interface.
+example (h : pat1 ⋈[FreePresentation] pat2) : True := by
+  unify h in FreePresentation
   guard_hyp u1 : Conf
   guard_hyp h1 : x1 = f u1 c
   guard_hyp h2 : x2 = c
@@ -1719,16 +1750,27 @@ instance : Unification.C.Operator f where
   comm := f_comm
   eq_iff := f_eq_iff
 
-/--
-The prototype module declaration selects C for `f`; the ordinary constructor
-`g` is absent and is therefore free.  The commutativity proof is recovered
-from the standard instance generated by the registration above.
+/-!
+`Module1` registers `f` with the same declaration function used for every arity.
+Only the commutative axiom is binary-specific.  The ordinary constructor `g`
+is absent and is therefore free.
 -/
-noncomputable def A : Unification.Module Conf where
-  binarySymbols := [{
-    operation := f
-    theory := .cOfInstance f
-  }]
+noncomputable def Module1 : framework.EqModule where
+  symbols := [framework.Symbol.declare f [
+    .commutative f_comm
+  ]]
+
+noncomputable def combineThree (first second third : Conf) : Conf :=
+  Conf.g (Conf.g first second) third
+
+/-- One uniform list containing unary, free binary, C, and ternary symbols. -/
+noncomputable def MixedA : framework.EqModule where
+  symbols := [
+    framework.Symbol.declare Conf.atom,
+    framework.Symbol.declare Conf.g,
+    framework.Symbol.declare f [.commutative f_comm],
+    framework.Symbol.declare combineThree
+  ]
 
 -- The same registration is visible to standard Lean tooling.
 example (a b : Conf) : f a b = f b a := by
@@ -1740,8 +1782,8 @@ noncomputable def pairRight (a b : Conf) : Conf := f a b
 -- There are two MGUs: the direct pairing and the swapped pairing.  Each is
 -- exposed through exactly the same basis-variable/equation interface as the
 -- free `unify` tactic, so this proof receives two goals.
-example (h : pairLeft ⋈[A] pairRight) : True := by
-  unify h in A
+example (h : pairLeft ⋈[Module1] pairRight) : True := by
+  unify h in Module1
   · guard_hyp u1 : Conf
     guard_hyp u2 : Conf
     guard_hyp h1 : x = u1
@@ -1757,13 +1799,19 @@ example (h : pairLeft ⋈[A] pairRight) : True := by
     guard_hyp h4 : b = u1
     exact True.intro
 
+-- The same C dispatch works when unrelated symbols of other arities share the
+-- presentation.  Registration does not partition symbols by arity.
+example (h : pairLeft ⋈[MixedA] pairRight) : True := by
+  unify h in MixedA
+  all_goals exact True.intro
+
 -- Registration is recursive: independently swapping the outer and inner
 -- occurrences yields a finite complete set, and every MGU becomes one goal.
 example
     (h :
-      (fun x y z : Conf => f (f x y) z) ⋈[A]
+      (fun x y z : Conf => f (f x y) z) ⋈[Module1]
       (fun a b c : Conf => f c (f a b))) : True := by
-  unify h in A
+  unify h in Module1
   all_goals exact True.intro
 
 -- Free constants can rule out every direct/swapped branch.  The hypothesis is
@@ -1776,21 +1824,40 @@ def blue : Conf := atom 1
 @[simp] theorem red_ne_blue : red ≠ blue := by
   simp [red, blue]
 
-example (h : (f red red : Conf) ⋈[A] f red blue) : False := by
-  unify h in A
+example (h : (f red red : Conf) ⋈[Module1] f red blue) : False := by
+  unify h in Module1
 
 end c_unification_examples
 
 
 namespace module_examples
 
-/- `Nat.add` needs no new law proofs: a module can select AC using the standard
-theorems already known to Lean.  This declaration does not claim that AC is
-the full arithmetic theory; it selects the presentation used for unification. -/
-def NatAC : Unification.Module Nat where
-  binarySymbols := [{
-    operation := Nat.add
-    theory := .ac Nat.add_assoc Nat.add_comm
-  }]
+/-- Representative operations of several arities and sorts. -/
+def zeroSymbol : Nat := 0
+def increment (value : Nat) : Nat := value + 1
+def firstOfThree (first _second _third : Nat) : Nat := first
+def select (value : Nat) (enabled : Bool) : Nat :=
+  if enabled then value else 0
+
+/--
+All arities use the same declaration function.  `select` also demonstrates
+that argument sorts need not be homogeneous.
+-/
+def MixedArityFree : framework.EqModule where
+  symbols := [
+    framework.Symbol.declare zeroSymbol,
+    framework.Symbol.declare increment,
+    framework.Symbol.declare firstOfThree,
+    framework.Symbol.declare select
+  ]
+
+/- `Nat.add` needs no new law proofs: its existing theorems populate the axiom
+list.  This declaration does not claim that AC is the full arithmetic theory;
+it selects the presentation used for unification. -/
+def NatAC : framework.EqModule where
+  symbols := [framework.Symbol.declare Nat.add [
+    .associative Nat.add_assoc,
+    .commutative Nat.add_comm
+  ]]
 
 end module_examples
