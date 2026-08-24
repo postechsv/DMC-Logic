@@ -184,12 +184,74 @@ end framework
 
 
 
-namespace free_unification
-
 open Lean Meta Elab Term Tactic
 open framework
 
 namespace Unification
+
+universe u v w
+
+/-!
+## Equational modules
+
+This is the kernel-visible half of the eventual user/framework contract.
+Theory selection is per symbol, not global: a module may contain free, C, and
+AC symbols simultaneously.  The selected laws carry their Lean proofs.
+Symbols absent from `binarySymbols` are treated as free.
+
+The elaborator-facing registry and `unify ... in ...` dispatch are built on
+top of these declarations; they do not replace this logical data.
+-/
+
+/-- The prototype theories supported for a binary symbol. -/
+inductive BinaryTheory {α : Type u} (operation : α → α → α) : Type u where
+  | free
+  | c (comm : ∀ left right, operation left right = operation right left)
+  | ac
+      (assoc : ∀ first second third,
+        operation (operation first second) third =
+          operation first (operation second third))
+      (comm : ∀ left right, operation left right = operation right left)
+
+namespace BinaryTheory
+
+/-- Select C while obtaining its proof from Lean's standard law class. -/
+def cOfInstance {α : Type u} (operation : α → α → α)
+    [Std.Commutative operation] : BinaryTheory operation :=
+  .c Std.Commutative.comm
+
+/-- Select AC while obtaining both proofs from Lean's standard law classes. -/
+def acOfInstances {α : Type u} (operation : α → α → α)
+    [Std.Associative operation] [Std.Commutative operation] :
+    BinaryTheory operation :=
+  .ac Std.Associative.assoc Std.Commutative.comm
+
+end BinaryTheory
+
+/-- One module-local declaration of a binary operation and its selected theory. -/
+structure BinarySymbol (α : Type u) where
+  operation : α → α → α
+  theory : BinaryTheory operation
+
+/--
+The equational part of a module.  Rewrite rules intentionally do not occur
+here, so unification remains independent of the rule layer.
+-/
+structure Module (α : Type u) where
+  binarySymbols : List (BinarySymbol α) := []
+
+/--
+Module-indexed unifiability.  The first prototype reuses the existing atomic
+pattern semantics; indexing the proposition now ensures that the selected
+presentation is explicit in theorem statements and available to tactics.
+-/
+def UnifiableIn {α : Type u} {P : Type v} {Q : Type w}
+    [State α] [AtPattern α P] [AtPattern α Q]
+    (_module : Module α) (left : P) (right : Q) : Prop :=
+  framework.Unifiable left right
+
+notation:50 left " ⋈[" module "] " right =>
+  UnifiableIn module left right
 
 /-!
 The implementation is intentionally split into namespaces that can later
@@ -208,6 +270,7 @@ structure SaturatedPattern where
 
 /-- The first-order equation sent to a unification backend. -/
 structure Input where
+  module? : Option Expr := none
   lhs : SaturatedPattern
   rhs : SaturatedPattern
 
@@ -230,15 +293,22 @@ def saturatePattern (pattern : Expr) : MetaM SaturatedPattern := do
     argumentNames
   }
 
-/-- Extract the two patterns from a proposition `p ⋈ q`. -/
+/-- Extract the optional module and two patterns from a unifiability proposition. -/
 def ofUnifiableType (type : Expr) : MetaM Input := do
   let type ← instantiateMVars type
   let arguments := type.getAppArgs
-  unless type.getAppFn.isConstOf ``Unifiable && arguments.size >= 2 do
+  let isDefault := type.getAppFn.isConstOf ``Unifiable
+  let isModuleIndexed := type.getAppFn.isConstOf ``UnifiableIn
+  unless (isDefault && arguments.size >= 2) ||
+      (isModuleIndexed && arguments.size >= 3) do
     throwError "expected a hypothesis of the form `p ⋈ q`"
   let lhs ← saturatePattern arguments[arguments.size - 2]!
   let rhs ← saturatePattern arguments[arguments.size - 1]!
-  return { lhs, rhs }
+  let module? := if isModuleIndexed then
+      some arguments[arguments.size - 3]!
+    else
+      none
+  return { module?, lhs, rhs }
 
 def argumentCount (problem : Input) : Nat :=
   problem.lhs.arguments.size + problem.rhs.arguments.size
@@ -247,6 +317,36 @@ def symbolicArguments (problem : Input) : Array Expr :=
   problem.lhs.arguments ++ problem.rhs.arguments
 
 end Problem
+
+
+namespace ModuleElaboration
+
+inductive Backend where
+  | free
+  | c
+
+/-- Read the selected prototype backend from a kernel-level module value. -/
+private partial def scanSymbols (symbols : Expr) (foundC : Bool) : MetaM Backend := do
+  let symbols ← withTransparency .all <| whnf symbols
+  let arguments := symbols.getAppArgs
+  if symbols.getAppFn.isConstOf ``List.nil then
+    return if foundC then .c else .free
+  unless symbols.getAppFn.isConstOf ``List.cons && arguments.size >= 3 do
+    throwError "could not reduce the module's binary-symbol declarations"
+  let symbol := arguments[arguments.size - 2]!
+  let tail := arguments[arguments.size - 1]!
+  let theory ← withTransparency .all <|
+    whnf (← mkAppM ``BinarySymbol.theory #[symbol])
+  if theory.getAppFn.isConstOf ``BinaryTheory.ac then
+    throwError "the AC backend is not implemented in this prototype"
+  let foundC := foundC || theory.getAppFn.isConstOf ``BinaryTheory.c
+  scanSymbols tail foundC
+
+def backend (module : Expr) : MetaM Backend := do
+  let symbols ← mkAppM ``Module.binarySymbols #[module]
+  scanSymbols symbols false
+
+end ModuleElaboration
 
 
 namespace Certificate
@@ -347,6 +447,23 @@ def solutionSetType
   return (branches, ← mkOrAll branches)
 
 end Certificate
+
+
+namespace C
+
+/--
+A binary operation that is free modulo commutativity.
+
+`Std.Commutative op` supplies the equation used to justify swapped terms.
+`eq_iff` is the constructor-decomposition principle needed to prove that the
+two orientations are complete.  Commutativity alone would not be sufficient:
+for example, a constant operation is commutative but has many extra equations.
+-/
+class Operator {α : Type u} (op : α → α → α) extends Std.Commutative op where
+  eq_iff (a b c d : α) :
+    op a b = op c d ↔ (a = c ∧ b = d) ∨ (a = d ∧ b = c)
+
+end C
 
 
 namespace Free
@@ -568,6 +685,146 @@ def certify
 end Free
 
 
+namespace C
+
+/-!
+The C backend is deliberately an adapter around the free backend.  It expands
+the right-hand term into every orientation permitted by registered
+`C.Operator`s, invokes native free unification independently on each
+orientation, and returns the resulting finite complete set through the common
+`Certificate` interface.
+-/
+
+abbrev Candidate := Free.Candidate
+
+structure Output where
+  candidates : Array Candidate := #[]
+
+private def operatorInstance? (operation : Expr) : MetaM (Option Expr) := do
+  try
+    return some (← synthInstance (← mkAppM ``Operator #[operation]))
+  catch _ =>
+    return none
+
+private def pushUniqueExpr (expressions : Array Expr) (expression : Expr) :
+    Array Expr :=
+  if expressions.any fun existing => existing == expression then
+    expressions
+  else
+    expressions.push expression
+
+/--
+Expose definitions until either a registered C operation or a rigid term is
+visible.  Registered defined functions are kept opaque at their application
+head so their user-supplied theory is not lost by unfolding.
+-/
+partial def exposeHead (expression : Expr) : MetaM Expr := do
+  let expression := expression.consumeMData
+  match expression with
+  | .app (.app operation _) _ =>
+      if (← operatorInstance? operation).isSome then
+        return expression
+  | _ => pure ()
+  let reduced ← withTransparency .all <| whnf expression
+  if reduced == expression then
+    return expression
+  exposeHead reduced
+
+/-- Enumerate all terms obtained by independently swapping registered C nodes. -/
+private partial def orientations (expression : Expr) : MetaM (Array Expr) := do
+  let expression ← exposeHead expression
+  match expression with
+  | .app (.app operation left) right =>
+      if (← operatorInstance? operation).isSome then
+        let leftOrientations ← orientations left
+        let rightOrientations ← orientations right
+        let mut result := #[]
+        for left in leftOrientations do
+          for right in rightOrientations do
+            result := pushUniqueExpr result (mkApp2 operation left right)
+            result := pushUniqueExpr result (mkApp2 operation right left)
+        return result
+  | _ => pure ()
+
+  -- A C node may occur below an otherwise free application.
+  let mut applications := #[expression.getAppFn]
+  for argument in expression.getAppArgs do
+    let argumentOrientations ← orientations argument
+    let mut next := #[]
+    for application in applications do
+      for orientedArgument in argumentOrientations do
+        next := pushUniqueExpr next (mkApp application orientedArgument)
+    applications := next
+  return applications
+
+private def sameAlternative
+    (left right : Certificate.Alternative) : Bool :=
+  left.basisTypes == right.basisTypes && left.images == right.images
+
+private def pushUniqueCandidate
+    (candidates : Array Candidate) (candidate : Candidate) : Array Candidate :=
+  if candidates.any fun existing =>
+      sameAlternative existing.alternative candidate.alternative then
+    candidates
+  else
+    candidates.push candidate
+
+/--
+Compute a finite complete set of C-unifiers by reducing each C orientation to
+the already certified free solver.  `withoutModifyingState` is essential:
+native unification may assign the saturated metavariables, and every
+orientation must start from the same untouched problem.
+-/
+def solve (problem : Problem.Input) : MetaM Output := do
+  let rhsOrientations ← orientations problem.rhs.application
+  let mut candidates := #[]
+  for rhs in rhsOrientations do
+    let output ← withoutModifyingState do
+      Free.solve {
+        lhs := problem.lhs
+        rhs := { problem.rhs with application := rhs }
+      }
+    for candidate in output.candidates do
+      candidates := pushUniqueCandidate candidates candidate
+  return { candidates }
+
+/--
+Replay the complete C result against the semantic equality extracted from
+`Unifiable`.  The registered decomposition rules turn equality at each C node
+into the same direct-or-swapped cases enumerated by `solve`; ordinary
+constructors and existential basis witnesses are discharged by `simp_all`.
+-/
+def certify
+    (output : Output) (actualArguments : Array Expr)
+    (_actualIdents : Array Ident) (irrelevant : Array FVarId := #[]) :
+    TacticM Certificate.ProvenSolutionSet := do
+  let solutionSet : Certificate.SolutionSet := {
+    alternatives := output.candidates.map (·.alternative)
+  }
+  let goal ← getMainGoal
+  let (branchPropositions, proposition) ← goal.withContext do
+    Certificate.solutionSetType solutionSet actualArguments
+  let proof ← goal.withContext do mkFreshExprMVar (some proposition)
+  let mut certificationGoal := proof.mvarId!
+  for hypothesis in irrelevant do
+    certificationGoal ← certificationGoal.clear hypothesis
+  replaceMainGoal [certificationGoal]
+  try
+    evalTactic (← `(tactic| simp_all [Operator.eq_iff] <;> grind))
+  catch exception =>
+    throwError m!"failed to certify the C-unification result:\n{exception.toMessageData}"
+  unless ← proof.mvarId!.isAssigned do
+    throwError "failed to construct the C-unification certificate"
+  let proof ← instantiateMVars proof
+  let remainingMVars ← getMVars proof
+  unless remainingMVars.isEmpty do
+    throwError "the C-unification proof contains an unabstracted metavariable"
+  setGoals [goal]
+  return { solutionSet, branchPropositions, proposition, proof }
+
+end C
+
+
 namespace Presentation
 
 def freshVisibleIdent (ref : Syntax) (base : Name) : TacticM Ident := do
@@ -695,6 +952,17 @@ private structure SemanticWitnesses where
   rhsSemanticsId : FVarId
   equalityId : FVarId
 
+private def instantiateSaturatedApplication
+    (pattern : Problem.SaturatedPattern) (arguments : Array Expr) : Expr :=
+  pattern.application.replace fun subterm =>
+    match subterm with
+    | .mvar id =>
+        match pattern.arguments.findIdx? fun argument =>
+            argument.isMVar && argument.mvarId! == id with
+        | some index => arguments[index]?
+        | none => none
+    | _ => none
+
 private def exposeSemantics
     (ref : Syntax) (h : Ident) (problem : Problem.Input) : TacticM
       SemanticWitnesses := do
@@ -735,10 +1003,18 @@ private def exposeSemantics
     let rhsSymm ← mkAppM ``Eq.symm #[mkFVar rhsSemanticsId]
     let proof ← mkAppM ``Eq.trans #[mkFVar lhsSemanticsId, rhsSymm]
     let proofType ← whnf (← inferType proof)
-    let some (_, lhs, rhs) := proofType.eq?
-      | throwError "malformed atomic-pattern semantics"
-    let lhs ← withTransparency .all <| whnf lhs
-    let rhs ← withTransparency .all <| whnf rhs
+    unless proofType.eq?.isSome do
+      throwError "malformed atomic-pattern semantics"
+    let lhsArguments := actualArguments.extract 0 problem.lhs.arguments.size
+    let rhsArguments := actualArguments.extract problem.lhs.arguments.size
+      actualArguments.size
+    -- Rebuild the equation from the saturated closures instead of reading its
+    -- sides back from `proof`.  The latter may already have unfolded a
+    -- reducible registered operation while reducing `AtPattern.semantics`.
+    let lhs ← C.exposeHead
+      (instantiateSaturatedApplication problem.lhs lhsArguments)
+    let rhs ← C.exposeHead
+      (instantiateSaturatedApplication problem.rhs rhsArguments)
     return (← mkEq lhs rhs, proof)
   let (equalityId, goal) ← goal.withContext do
     goal.note equalityName equalityProof (some equalityType)
@@ -763,24 +1039,69 @@ private def clearSemantics (witnesses : SemanticWitnesses) : TacticM Unit := do
     clearedGoals := clearedGoals.push goal
   setGoals clearedGoals.toList
 
-/-- Run the native free-unification backend and expose its certified MGU. -/
-def run (ref : Syntax) (h : Ident) : TacticM Unit := do
+/--
+Shared frontend/backend boundary.  A backend supplies only `solve` and
+`certify`; extraction of the `Unifiable` semantics and presentation of basis
+variables and equations are theory-independent.
+-/
+private def runWith {Output : Type}
+    (solve : Problem.Input → MetaM Output)
+    (certify : Output → Array Expr → Array Ident → Array FVarId →
+      TacticM Certificate.ProvenSolutionSet)
+    (ref : Syntax) (h : Ident) : TacticM Unit := do
   let hypothesisId ← getFVarId h
   let hypothesisType ← instantiateMVars (← hypothesisId.getType)
   let initialGoal ← getMainGoal
   let (problem, output) ← initialGoal.withContext do
     let problem ← Problem.ofUnifiableType hypothesisType
-    let output ← Free.solve problem
+    let output ← solve problem
     return (problem, output)
 
   let witnesses ← exposeSemantics ref h problem
   let proven ← try
-      Free.certify output witnesses.actualArguments witnesses.actualIdents
+      certify output witnesses.actualArguments witnesses.actualIdents
         #[witnesses.lhsSemanticsId, witnesses.rhsSemanticsId, witnesses.stateId]
     catch exception =>
       throwErrorAt h exception.toMessageData
   Presentation.expose proven
   clearSemantics witnesses
+
+/-- Run the native free-unification backend and expose its certified MGU. -/
+def run (ref : Syntax) (h : Ident) : TacticM Unit :=
+  runWith Free.solve
+    (fun output arguments idents irrelevant =>
+      Free.certify output arguments idents irrelevant)
+    ref h
+
+/-- Run the C-unification backend and expose its certified complete MGU set. -/
+def runC (ref : Syntax) (h : Ident) : TacticM Unit :=
+  runWith C.solve
+    (fun output arguments idents irrelevant =>
+      C.certify output arguments idents irrelevant)
+    ref h
+
+/--
+Resolve an explicit module from a module-indexed unifiability hypothesis and
+dispatch to the first prototype backend selected by that module.
+-/
+def runIn (ref : Syntax) (h : Ident) (moduleSyntax : TSyntax `term) :
+    TacticM Unit := do
+  let hypothesisId ← getFVarId h
+  let hypothesisType ← instantiateMVars (← hypothesisId.getType)
+  let goal ← getMainGoal
+  let problem ← goal.withContext do
+    Problem.ofUnifiableType hypothesisType
+  let some declaredModule := problem.module?
+    | throwErrorAt h "`unify ... in ...` requires a hypothesis `p ⋈[A] q`"
+  let requestedModule ← goal.withContext do
+    Term.elabTerm moduleSyntax.raw (some (← inferType declaredModule))
+  let modulesMatch ← goal.withContext do
+    withoutModifyingState (isDefEq requestedModule declaredModule)
+  unless modulesMatch do
+    throwErrorAt moduleSyntax "the requested module does not match the module in the hypothesis"
+  match ← goal.withContext do ModuleElaboration.backend requestedModule with
+  | .free => run ref h
+  | .c => runC ref h
 
 end Tactic
 
@@ -793,6 +1114,18 @@ original pattern argument.  On failure it closes the goal by contradiction.
 -/
 elab "unify " h:ident : tactic =>
   Unification.Tactic.run h.raw h
+
+/--
+Compute and certify all MGUs modulo registered free commutative operations.
+The exposed basis-variable/equation interface is identical to `unify`; more
+than one MGU creates more than one proof goal.
+-/
+elab "c_unify " h:ident : tactic =>
+  Unification.Tactic.runC h.raw h
+
+/-- Unify using the equational presentation explicitly named by the user. -/
+elab "unify " h:ident " in " module:term : tactic =>
+  Unification.Tactic.runIn h.raw h module
 
 
 namespace Narrowing
@@ -1121,19 +1454,9 @@ elab "narrow " rule:term " against " source:term : tactic =>
 elab "subsume" : tactic =>
   Narrowing.Subsumption.run
 
-end free_unification
-
-
-
-
-
-
-
-
 namespace examples
 
 open framework
-open free_unification
 
 -- User-defined model for the examples.  It is deliberately not part of the
 -- generic free-unification implementation, and it needs no `var` constructor.
@@ -1143,6 +1466,9 @@ inductive Conf where
   deriving Repr
 
 instance : State Conf := ⟨⟩
+
+/-- An empty presentation: every symbol is free. -/
+def FreeModule : Unification.Module Conf := {}
 
 open Conf
 
@@ -1170,6 +1496,15 @@ No more unifiers.
 -- pat1 ⋈ pat2 means pat1 & pat2 are unifiable
 example (h : pat1 ⋈ pat2) : True := by
   unify h
+  guard_hyp u1 : Conf
+  guard_hyp h1 : x1 = f u1 c
+  guard_hyp h2 : x2 = c
+  guard_hyp h3 : y1 = u1
+  exact True.intro
+
+-- The explicit module form has the same public result interface.
+example (h : pat1 ⋈[FreeModule] pat2) : True := by
+  unify h in FreeModule
   guard_hyp u1 : Conf
   guard_hyp h1 : x1 = f u1 c
   guard_hyp h2 : x2 = c
@@ -1264,7 +1599,6 @@ end examples
 namespace narrowing_examples
 
 open framework
-open free_unification
 
 /-!
 This model, its patterns, and its rules are user code.  In particular, the
@@ -1348,3 +1682,115 @@ example : constrainedOut ⊢ source ↪ target := by
   subsume
 
 end narrowing_examples
+
+
+namespace c_unification_examples
+
+open framework
+
+/-!
+`Conf` has the same shape as an ordinary user model: it contains only concrete
+configuration constructors and no constructor for logical variables.  The
+commutative `f` is a separate function symbol rather than an ordered inductive
+constructor.  Its equational laws are part of this example model, not the
+tactic, and all tactic code still appears above these declarations.
+-/
+
+inductive Conf where
+  | atom : Nat → Conf
+  | g : Conf → Conf → Conf
+  deriving Repr
+
+instance : State Conf := ⟨⟩
+
+-- A function symbol of the model.  It is deliberately not a `Conf`
+-- constructor, so its commutativity does not conflict with constructor
+-- injectivity.
+axiom f : Conf → Conf → Conf
+
+/-- The characteristic equality law of a free commutative constructor. -/
+axiom f_eq_iff (a b c d : Conf) :
+  f a b = f c d ↔ (a = c ∧ b = d) ∨ (a = d ∧ b = c)
+
+axiom f_comm (a b : Conf) : f a b = f b a
+
+/-- Register `f`; `c_unify` discovers this instance by typeclass synthesis. -/
+instance : Unification.C.Operator f where
+  comm := f_comm
+  eq_iff := f_eq_iff
+
+/--
+The prototype module declaration selects C for `f`; the ordinary constructor
+`g` is absent and is therefore free.  The commutativity proof is recovered
+from the standard instance generated by the registration above.
+-/
+noncomputable def A : Unification.Module Conf where
+  binarySymbols := [{
+    operation := f
+    theory := .cOfInstance f
+  }]
+
+-- The same registration is visible to standard Lean tooling.
+example (a b : Conf) : f a b = f b a := by
+  exact Std.Commutative.comm a b
+
+noncomputable def pairLeft (x y : Conf) : Conf := f x y
+noncomputable def pairRight (a b : Conf) : Conf := f a b
+
+-- There are two MGUs: the direct pairing and the swapped pairing.  Each is
+-- exposed through exactly the same basis-variable/equation interface as the
+-- free `unify` tactic, so this proof receives two goals.
+example (h : pairLeft ⋈[A] pairRight) : True := by
+  unify h in A
+  · guard_hyp u1 : Conf
+    guard_hyp u2 : Conf
+    guard_hyp h1 : x = u1
+    guard_hyp h2 : y = u2
+    guard_hyp h3 : a = u1
+    guard_hyp h4 : b = u2
+    exact True.intro
+  · guard_hyp u1 : Conf
+    guard_hyp u2 : Conf
+    guard_hyp h1 : x = u1
+    guard_hyp h2 : y = u2
+    guard_hyp h3 : a = u2
+    guard_hyp h4 : b = u1
+    exact True.intro
+
+-- Registration is recursive: independently swapping the outer and inner
+-- occurrences yields a finite complete set, and every MGU becomes one goal.
+example
+    (h :
+      (fun x y z : Conf => f (f x y) z) ⋈[A]
+      (fun a b c : Conf => f c (f a b))) : True := by
+  unify h in A
+  all_goals exact True.intro
+
+-- Free constants can rule out every direct/swapped branch.  The hypothesis is
+-- then contradictory and `c_unify` closes an arbitrary target.
+open Conf
+
+def red : Conf := atom 0
+def blue : Conf := atom 1
+
+@[simp] theorem red_ne_blue : red ≠ blue := by
+  simp [red, blue]
+
+example (h : (f red red : Conf) ⋈[A] f red blue) : False := by
+  unify h in A
+
+end c_unification_examples
+
+
+namespace module_examples
+
+/- `Nat.add` needs no new law proofs: a module can select AC using the standard
+theorems already known to Lean.  This declaration does not claim that AC is
+the full arithmetic theory; it selects the presentation used for unification. -/
+def NatAC : Unification.Module Nat where
+  binarySymbols := [{
+    operation := Nat.add
+    theory := .ac Nat.add_assoc Nat.add_comm
+  }]
+
+end module_examples
