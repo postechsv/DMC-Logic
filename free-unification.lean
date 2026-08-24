@@ -143,6 +143,28 @@ theorem mapsInto_of_narrowsTo_of_subsumes
   apply hsubsumes after
   exact (hnarrow after).2 ⟨before, hsource, hrule⟩
 
+/--
+Prove `mapsInto` through an existentially generated post.  The post
+representation itself is existential because a heterogeneous disjunction's
+concrete Lean type is not known before narrowing.
+-/
+theorem mapsInto_via_narrowing
+    {α : Type u} {P : Type v} {Q : Type w} {R : Type x}
+    [state : State α] [sourcePattern : Pattern α P]
+    [targetPattern : Pattern α Q] [ruleSemantics : AtRule α R]
+    {rule : R} {source : P} {target : Q}
+    (decomposition :
+      ∃ (Post : Type y) (postPattern : Pattern α Post) (post : Post),
+        @NarrowsTo α P Post R state sourcePattern postPattern ruleSemantics
+            rule source post ∧
+        @Subsumes α Post Q state postPattern targetPattern post target) :
+    mapsInto rule source target := by
+  rcases decomposition with
+    ⟨Post, postPattern, post, narrowing, subsumption⟩
+  exact @mapsInto_of_narrowsTo_of_subsumes α P Post Q R
+    state sourcePattern postPattern targetPattern ruleSemantics
+    rule source post target narrowing subsumption
+
 /-- Once the exact post is known, `mapsInto` is precisely subsumption. -/
 theorem mapsInto_iff_subsumes_of_narrowsTo
     {α : Type u} {P : Type v} {Post : Type w} {Q : Type x}
@@ -855,19 +877,17 @@ end Problem
 
 namespace Goal
 
-/-- The three user objects encoded in a `mapsInto` target. -/
-structure Input where
-  rule : Expr
+/-- The two user objects encoded in a `Subsumes` target. -/
+structure SubsumptionInput where
   source : Expr
   target : Expr
 
-def ofMapsIntoType (type : Expr) : MetaM Input := do
+def ofSubsumesType (type : Expr) : MetaM SubsumptionInput := do
   let type ← instantiateMVars type
   let arguments := type.getAppArgs
-  unless type.getAppFn.isConstOf ``mapsInto && arguments.size >= 3 do
-    throwError "`narrow` expects a goal of the form `mapsInto rule source target`"
+  unless type.getAppFn.isConstOf ``Subsumes && arguments.size >= 2 do
+    throwError "`subsume` expects a goal of the form `source ⊑ target`"
   return {
-    rule := arguments[arguments.size - 3]!
     source := arguments[arguments.size - 2]!
     target := arguments[arguments.size - 1]!
   }
@@ -970,7 +990,7 @@ def post (problem : Problem.Input)
 end Materialization
 
 
-namespace Certification
+namespace Closure
 
 /--
 Find the definition, if any, that directly supplies a rule or pattern closure.
@@ -986,11 +1006,10 @@ private partial def closureDefinition? (expression : Expr) : Option Name :=
       | .const name _ => some name
       | _ => none
 
-private def unfoldingDefinitions
-    (goalInput : Goal.Input) : CoreM (Array Name) := do
+def unfoldingDefinitions (expressions : Array Expr) : CoreM (Array Name) := do
   let environment ← getEnv
   let mut result := #[]
-  for expression in #[goalInput.rule, goalInput.source] do
+  for expression in expressions do
     let some name := closureDefinition? expression | continue
     let isDefinition := match environment.find? name with
       | some (.defnInfo _) | some (.opaqueInfo _) => true
@@ -999,17 +1018,22 @@ private def unfoldingDefinitions
       result := result.push name
   return result
 
+end Closure
+
+
+namespace Certification
+
 /--
 Certify that the materialized post is the complete one-step image.  This
 prototype replays free constructor reasoning with `simp` and `grind`; an AC
 backend can replace this namespace with certificate replay for its theory.
 -/
-def prove (ref : Syntax) (goalInput : Goal.Input)
+def prove (ref : Syntax) (rule source : Expr)
     (ruleSyntax sourceSyntax : TSyntax `term) (postIdent : Ident) :
     TacticM Ident := do
   let narrowingIdent ←
     Unification.Presentation.freshVisibleIdent ref `narrowing
-  let unfoldNames ← unfoldingDefinitions goalInput
+  let unfoldNames ← Closure.unfoldingDefinitions #[rule, source]
   let unfoldSimps ← unfoldNames.mapM fun name =>
     `(Parser.Tactic.simpLemma| $(mkIdent name):ident)
   try
@@ -1029,14 +1053,10 @@ end Certification
 
 namespace Tactic
 
-private def checkUserTerms
-    (goalInput : Goal.Input) (ruleSyntax sourceSyntax : Syntax) : TacticM Unit := do
-  let rule ← Tactic.elabTerm ruleSyntax (some (← inferType goalInput.rule))
-  let source ← Tactic.elabTerm sourceSyntax (some (← inferType goalInput.source))
-  unless ← isDefEq rule goalInput.rule do
-    throwErrorAt ruleSyntax "this is not the rule in the `mapsInto` goal"
-  unless ← isDefEq source goalInput.source do
-    throwErrorAt sourceSyntax "this is not the source pattern in the `mapsInto` goal"
+private def ensureDecompositionGoal (goal : MVarId) : MetaM Unit := do
+  let type ← whnf (← goal.getType)
+  unless type.getAppFn.isConstOf ``Exists do
+    throwError "`narrow` expects the post goal from `apply mapsInto_via_narrowing`"
 
 private def bindPost (ref : Syntax) (post : Materialization.Post) :
     TacticM Ident := do
@@ -1049,34 +1069,57 @@ private def bindPost (ref : Syntax) (post : Materialization.Post) :
   return mkIdentFrom ref name
 
 /--
-Generate and bind the exact one-step post, prove its narrowing judgment, and
-reduce a `mapsInto` goal to subsumption of that generated post.
+Generate and bind the exact one-step post, then fill the post and narrowing
+parts of the explicit decomposition.  Only subsumption remains.
 -/
 def run (ref : Syntax) (ruleSyntax sourceSyntax : TSyntax `term) : TacticM Unit := do
   let initialGoal ← getMainGoal
-  let (goalInput, generatedPost) ← initialGoal.withContext do
-    let goalInput ← Goal.ofMapsIntoType (← initialGoal.getType)
-    checkUserTerms goalInput ruleSyntax.raw sourceSyntax.raw
-    let problem ← Problem.ofTerms goalInput.rule goalInput.source
+  let (rule, source, generatedPost) ← initialGoal.withContext do
+    ensureDecompositionGoal initialGoal
+    let rule ← Tactic.elabTerm ruleSyntax.raw none
+    let source ← Tactic.elabTerm sourceSyntax.raw none
+    let problem ← Problem.ofTerms rule source
     let solutionSet ← Backend.solve problem
     let generatedPost ← Materialization.post problem solutionSet.alternatives
-    return (goalInput, generatedPost)
+    return (rule, source, generatedPost)
 
   let postIdent ← bindPost ref generatedPost
-  let narrowingIdent ← Certification.prove ref goalInput
+  let narrowingIdent ← Certification.prove ref rule source
     ruleSyntax sourceSyntax postIdent
 
   evalTactic (← `(tactic|
-    apply mapsInto_of_narrowsTo_of_subsumes
-      ($narrowingIdent:term)))
+    refine ⟨_, inferInstance, $postIdent:term,
+      $narrowingIdent:term, ?_⟩))
 
 end Tactic
 
+
+namespace Subsumption
+
+/-- Simplify and prove the residual semantic inclusion between patterns. -/
+def run : TacticM Unit := do
+  let goal ← getMainGoal
+  let input ← goal.withContext do
+    Goal.ofSubsumesType (← goal.getType)
+  let unfoldNames ← Closure.unfoldingDefinitions #[input.source, input.target]
+  let unfoldSimps ← unfoldNames.mapM fun name =>
+    `(Parser.Tactic.simpLemma| $(mkIdent name):ident)
+  evalTactic (← `(tactic|
+    simp [Subsumes, Pattern.semantics, AtPattern.semantics,
+      $unfoldSimps,*] <;>
+      grind))
+
+end Subsumption
+
 end Narrowing
 
-/-- Perform one constrained narrowing step for a single rule and source. -/
+/-- Generate the post and certify one constrained narrowing phase. -/
 elab "narrow " rule:term " against " source:term : tactic =>
   Narrowing.Tactic.run rule.raw rule source
+
+/-- Prove the residual pattern-subsumption phase. -/
+elab "subsume" : tactic =>
+  Narrowing.Subsumption.run
 
 end free_unification
 
@@ -1255,22 +1298,25 @@ def advance (payload next : Nat) : RuleBody Conf where
   requires := next = payload + 1
 
 example : advance ⊢ source ↪ target := by
+  apply mapsInto_via_narrowing
+  -- The goal is now an explicit existential post together with narrowing and
+  -- subsumption obligations.
   narrow advance against source
   -- `post` is generated by the tactic; the user supplies no intermediate
   -- pattern.  Only the subsumption phase remains.
-  simp [Subsumes, Pattern.semantics, AtPattern.semantics, post, target]
-  grind
+  subsume
 
 /-- A rule whose constructor-headed LHS cannot match `source`. -/
 def blocked : RuleBody Conf where
   lhs := pair (atom 1) (atom 0)
   rhs := atom 0
 
--- With no structural unifier, the assumed step is impossible and `narrow`
--- closes the `mapsInto` proof.  No special lemma about `blocked` is supplied.
+-- With no structural unifier, `narrow` generates the empty post and
+-- `subsume` closes its inclusion. No special lemma about `blocked` is supplied.
 example : blocked ⊢ source ↪ target := by
+  apply mapsInto_via_narrowing
   narrow blocked against source
-  simp [Subsumes, Pattern.semantics, AtPattern.semantics]
+  subsume
 
 /- This LHS matches `source`, but its constraint requires the matched positive
 payload to be zero. -/
@@ -1282,7 +1328,8 @@ def constrainedOut (payload : Nat) : RuleBody Conf where
 -- Structural unification returns an MGU branch.  Its instantiated constraints
 -- are `0 < n` and `payload = 0`, so the constraints filter that branch out.
 example : constrainedOut ⊢ source ↪ target := by
+  apply mapsInto_via_narrowing
   narrow constrainedOut against source
-  simp [Subsumes, Pattern.semantics, AtPattern.semantics, post]
+  subsume
 
 end narrowing_examples
