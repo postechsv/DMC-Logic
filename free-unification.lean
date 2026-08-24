@@ -3,7 +3,7 @@ import Lean
 
 namespace framework
 
-universe u v w x
+universe u v w x y
 
 -- α is the type of states
 class State (α : Type u) : Prop where
@@ -24,13 +24,45 @@ structure PatternBody (α : Type u) where
   term : α
   requires : Prop := True
 
-instance {α : Type u} [State α] : AtPattern α (PatternBody α) where
+instance patternBodyAtPattern {α : Type u} [State α] :
+    AtPattern α (PatternBody α) where
   semantics pattern state :=
     pattern.term = state ∧ pattern.requires
 
-instance {α : Type u} {A : Type v} {P : Type w}
+instance functionAtPattern {α : Type u} {A : Type v} {P : Type w}
     [State α] [AtPattern α P] : AtPattern α (A → P) where
   semantics p state := ∃ x, AtPattern.semantics (p x) state
+
+/-- Patterns are atomic patterns closed under finite disjunction. -/
+class Pattern (α : outParam (Type u)) [State α] (P : Type v) where
+  semantics : P → α → Prop
+
+instance atomicPattern {α : Type u} {P : Type v}
+    [State α] [AtPattern α P] :
+    Pattern α P where
+  semantics := AtPattern.semantics
+
+/-- A heterogeneous disjunction of two pattern representations. -/
+structure Disjunction (P : Type v) (Q : Type w) where
+  left : P
+  right : Q
+
+infixr:65 " ⊔ " => framework.Disjunction.mk
+
+instance disjunctionPattern {α : Type u} {P : Type v} {Q : Type w}
+    [State α] [Pattern α P] [Pattern α Q] :
+    Pattern α (Disjunction P Q) where
+  semantics patterns state :=
+    Pattern.semantics patterns.left state ∨
+    Pattern.semantics patterns.right state
+
+/-- The empty pattern, used when narrowing returns no alternatives. -/
+inductive EmptyPattern (α : Type u) where
+  | empty : EmptyPattern α
+
+instance emptyAtPattern {α : Type u} [State α] :
+    AtPattern α (EmptyPattern α) where
+  semantics _ _ := False
 
 def Unifiable {α : Type u} {P : Type v} {Q : Type w}
     [State α] [AtPattern α P] [AtPattern α Q]
@@ -49,23 +81,81 @@ structure RuleBody (α : Type u) where
 class AtRule (α : outParam (Type u)) [State α] (R : Type v) where
   semantics : R → α → α → Prop
 
-instance {α : Type u} [State α] : AtRule α (RuleBody α) where
+instance ruleBodyAtRule {α : Type u} [State α] :
+    AtRule α (RuleBody α) where
   semantics rule before after :=
     rule.lhs = before ∧ rule.rhs = after ∧ rule.requires
 
-instance {α : Type u} {A : Type v} {R : Type w}
+instance functionAtRule {α : Type u} {A : Type v} {R : Type w}
     [State α] [AtRule α R] : AtRule α (A → R) where
   semantics rule before after :=
     ∃ argument, AtRule.semantics (rule argument) before after
 
+/-- The semantic one-step image of `source` under `rule`. -/
+def postImage {α : Type u} {P : Type v} {R : Type w}
+    [State α] [Pattern α P] [AtRule α R]
+    (rule : R) (source : P) (after : α) : Prop :=
+  ∃ before,
+    Pattern.semantics source before ∧
+    AtRule.semantics rule before after
+
+/-- Semantic inclusion between two possibly different pattern representations. -/
+def Subsumes {α : Type u} {P : Type v} {Q : Type w}
+    [State α] [Pattern α P] [Pattern α Q]
+    (source : P) (target : Q) : Prop :=
+  ∀ state, Pattern.semantics source state →
+    Pattern.semantics target state
+
+/-- A generated pattern is the exact one-step image of a rule and source. -/
+def NarrowsTo {α : Type u} {P : Type v} {Post : Type w} {R : Type x}
+    [State α] [Pattern α P] [Pattern α Post] [AtRule α R]
+    (rule : R) (source : P) (post : Post) : Prop :=
+  ∀ after,
+    Pattern.semantics post after ↔ postImage rule source after
+
 /-- Every step of `rule` from a state denoted by `source` lands in `target`. -/
 def mapsInto {α : Type u} {P : Type v} {Q : Type w} {R : Type x}
-    [State α] [AtPattern α P] [AtPattern α Q] [AtRule α R]
+    [State α] [Pattern α P] [Pattern α Q] [AtRule α R]
     (rule : R) (source : P) (target : Q) : Prop :=
   ∀ before after,
-    AtPattern.semantics source before →
+    Pattern.semantics source before →
     AtRule.semantics rule before after →
-    AtPattern.semantics target after
+    Pattern.semantics target after
+
+notation:40 rule " ⊢ " source " ↝ " post =>
+  NarrowsTo rule source post
+
+notation:40 rule " ⊢ " source " ↪ " target =>
+  mapsInto rule source target
+
+infix:50 " ⊑ " => Subsumes
+
+/-- Compose exact one-step narrowing with subsumption. -/
+theorem mapsInto_of_narrowsTo_of_subsumes
+    {α : Type u} {P : Type v} {Post : Type w} {Q : Type x}
+    {R : Type y} [State α] [Pattern α P] [Pattern α Post]
+    [Pattern α Q] [AtRule α R]
+    {rule : R} {source : P} {post : Post} {target : Q}
+    (hnarrow : NarrowsTo rule source post)
+    (hsubsumes : Subsumes post target) :
+    mapsInto rule source target := by
+  intro before after hsource hrule
+  apply hsubsumes after
+  exact (hnarrow after).2 ⟨before, hsource, hrule⟩
+
+/-- Once the exact post is known, `mapsInto` is precisely subsumption. -/
+theorem mapsInto_iff_subsumes_of_narrowsTo
+    {α : Type u} {P : Type v} {Post : Type w} {Q : Type x}
+    {R : Type y} [State α] [Pattern α P] [Pattern α Post]
+    [Pattern α Q] [AtRule α R]
+    {rule : R} {source : P} {post : Post} {target : Q}
+    (hnarrow : NarrowsTo rule source post) :
+    mapsInto rule source target ↔ Subsumes post target := by
+  constructor
+  · intro hmaps state hpost
+    obtain ⟨before, hsource, hrule⟩ := (hnarrow state).1 hpost
+    exact hmaps before state hsource hrule
+  · exact mapsInto_of_narrowsTo_of_subsumes hnarrow
 
 end framework
 
@@ -696,6 +786,7 @@ namespace Problem
 
 /-- A rule closure whose binders were saturated together exactly once. -/
 structure SaturatedRule where
+  value : Expr
   closure : Unification.Problem.SaturatedPattern
   lhs : Expr
   rhs : Expr
@@ -703,6 +794,7 @@ structure SaturatedRule where
 
 /-- A constrained pattern closure saturated exactly once. -/
 structure SaturatedConstrainedPattern where
+  value : Expr
   closure : Unification.Problem.SaturatedPattern
   term : Expr
   requires : Expr
@@ -721,6 +813,7 @@ def saturateRule (rule : Expr) : MetaM SaturatedRule := do
   let application ← withTransparency .all <| whnf closure.application
   try
     return {
+      value := rule
       closure
       lhs := ← project ``RuleBody.lhs application
       rhs := ← project ``RuleBody.rhs application
@@ -734,6 +827,7 @@ def saturateSource (source : Expr) : MetaM SaturatedConstrainedPattern := do
   let application ← withTransparency .all <| whnf closure.application
   try
     return {
+      value := source
       closure
       term := ← project ``PatternBody.term application
       requires := ← project ``PatternBody.requires application
@@ -781,147 +875,156 @@ def ofMapsIntoType (type : Expr) : MetaM Input := do
 end Goal
 
 
-namespace Semantics
-
-/-- Proof-level witnesses obtained from the source and rule semantics. -/
-structure Witnesses where
-  actualArguments : Array Expr
-  actualIdents : Array Ident
-  beforeId : FVarId
-  afterId : FVarId
-  sourceTermId : FVarId
-  sourceRequiresId : FVarId
-  ruleLhsId : FVarId
-  ruleRhsId : FVarId
-  ruleRequiresId : FVarId
-  equalityId : FVarId
-
-private def openArguments
-    (ref : Syntax) (semanticWitness : Ident)
-    (closure : Unification.Problem.SaturatedPattern)
-    (fallbackPrefix : String) : TacticM (Array Ident) := do
-  let mut actualIdents := #[]
-  for i in [:closure.arguments.size] do
-    let base := Unification.Problem.visibleName s!"{fallbackPrefix}{i + 1}"
-      closure.argumentNames[i]!
-    let argumentIdent ← Unification.Presentation.freshVisibleIdent ref base
-    evalTactic (← `(tactic|
-      rcases ($semanticWitness:term) with
-        ⟨$argumentIdent:ident, $semanticWitness:ident⟩))
-    actualIdents := actualIdents.push argumentIdent
-  return actualIdents
-
-/--
-Open the semantic meaning of `mapsInto` and retain the RHS and constraints.
-Only the LHS/source-term equalities are combined into the equation certified
-by the unification backend.
--/
-def expose (ref : Syntax) (problem : Problem.Input) : TacticM Witnesses := do
-  let beforeIdent ← Unification.Presentation.freshVisibleIdent ref `_before
-  let afterIdent ← Unification.Presentation.freshVisibleIdent ref `_after
-  let sourceSemanticIdent ←
-    Unification.Presentation.freshVisibleIdent ref `_source
-  let ruleSemanticIdent ←
-    Unification.Presentation.freshVisibleIdent ref `_rule
-  evalTactic (← `(tactic|
-    intro $beforeIdent:ident $afterIdent:ident
-      $sourceSemanticIdent:ident $ruleSemanticIdent:ident))
-
-  let ruleIdents ← openArguments ref ruleSemanticIdent
-    problem.rule.closure "r"
-  let sourceIdents ← openArguments ref sourceSemanticIdent
-    problem.source.closure "p"
-
-  let sourceTermIdent ←
-    Unification.Presentation.freshVisibleIdent ref `_sourceTerm
-  let sourceRequiresIdent ←
-    Unification.Presentation.freshVisibleIdent ref `source_requires
-  evalTactic (← `(tactic|
-    rcases ($sourceSemanticIdent:term) with
-      ⟨$sourceTermIdent:ident, $sourceRequiresIdent:ident⟩))
-
-  let ruleLhsIdent ←
-    Unification.Presentation.freshVisibleIdent ref `_ruleLhs
-  let ruleTailIdent ←
-    Unification.Presentation.freshVisibleIdent ref `_ruleTail
-  evalTactic (← `(tactic|
-    rcases ($ruleSemanticIdent:term) with
-      ⟨$ruleLhsIdent:ident, $ruleTailIdent:ident⟩))
-  let ruleRhsIdent ←
-    Unification.Presentation.freshVisibleIdent ref `rule_rhs
-  let ruleRequiresIdent ←
-    Unification.Presentation.freshVisibleIdent ref `rule_requires
-  evalTactic (← `(tactic|
-    rcases ($ruleTailIdent:term) with
-      ⟨$ruleRhsIdent:ident, $ruleRequiresIdent:ident⟩))
-
-  let sourceTermId ← getFVarId sourceTermIdent
-  let ruleLhsId ← getFVarId ruleLhsIdent
-  let goal ← getMainGoal
-  let equalityName ← goal.withContext do
-    return (← getLCtx).getUnusedName `_narrowEq
-  let (equalityType, equalityProof) ← goal.withContext do
-    let sourceSymm ← mkAppM ``Eq.symm #[mkFVar sourceTermId]
-    let proof ← mkAppM ``Eq.trans #[mkFVar ruleLhsId, sourceSymm]
-    let proofType ← whnf (← inferType proof)
-    let some (_, lhs, rhs) := proofType.eq?
-      | throwError "malformed rule or pattern semantics"
-    let lhs ← withTransparency .all <| whnf lhs
-    let rhs ← withTransparency .all <| whnf rhs
-    return (← mkEq lhs rhs, proof)
-  let (equalityId, goal) ← goal.withContext do
-    goal.note equalityName equalityProof (some equalityType)
-  setGoals [goal]
-
-  let actualIdents := ruleIdents ++ sourceIdents
-  let actualIds ← actualIdents.mapM getFVarId
-  return {
-    actualArguments := actualIds.map mkFVar
-    actualIdents
-    beforeId := ← getFVarId beforeIdent
-    afterId := ← getFVarId afterIdent
-    sourceTermId
-    sourceRequiresId := ← getFVarId sourceRequiresIdent
-    ruleLhsId
-    ruleRhsId := ← getFVarId ruleRhsIdent
-    ruleRequiresId := ← getFVarId ruleRequiresIdent
-    equalityId
-  }
-
-/-- Facts which must not participate in structural unifier certification. -/
-def certificationIrrelevant (witnesses : Witnesses) : Array FVarId :=
-  #[witnesses.sourceRequiresId, witnesses.ruleRhsId,
-    witnesses.ruleRequiresId, witnesses.sourceTermId, witnesses.ruleLhsId,
-    witnesses.beforeId, witnesses.afterId]
-
-/-- Remove structural scaffolding while preserving the RHS and constraints. -/
-def clearStructural (witnesses : Witnesses) : TacticM Unit := do
-  let mut clearedGoals := #[]
-  for goal in ← getGoals do
-    let goal ← goal.clear witnesses.equalityId
-    let goal ← goal.clear witnesses.sourceTermId
-    let goal ← goal.clear witnesses.ruleLhsId
-    let goal ← goal.clear witnesses.beforeId
-    clearedGoals := clearedGoals.push goal
-  setGoals clearedGoals.toList
-
-end Semantics
-
-
 namespace Backend
 
-/-- The current backend choice; replace this bridge to select AC unification. -/
-def solve (problem : Problem.Input) : MetaM Unification.Free.Output :=
-  Unification.Free.solve problem.unification
-
-/-- Replay and certify the current backend's answer. -/
-def certify
-    (output : Unification.Free.Output) (witnesses : Semantics.Witnesses) :
-    TacticM Unification.Certificate.ProvenSolutionSet :=
-  Unification.Free.certify output witnesses.actualArguments
-    witnesses.actualIdents (Semantics.certificationIrrelevant witnesses)
+/--
+The current backend bridge.  Backend-private evidence is erased here; all
+later narrowing phases consume only the common solver-neutral solution set.
+-/
+def solve (problem : Problem.Input) : MetaM Unification.Certificate.SolutionSet := do
+  let output ← Unification.Free.solve problem.unification
+  return { alternatives := output.candidates.map (·.alternative) }
 
 end Backend
+
+
+namespace Materialization
+
+/-- A generated post together with its concrete (possibly heterogeneous) type. -/
+structure Post where
+  type : Expr
+  value : Expr
+
+private partial def withBasisVariables
+    {α : Type}
+    (types : Array Expr) (index : Nat) (variables : Array Expr)
+    (continuation : Array Expr → MetaM α) : MetaM α := do
+  if _h : index < types.size then
+    withLocalDeclD (Name.mkSimple s!"u{index + 1}") types[index]!
+      fun basisVariable =>
+        withBasisVariables types (index + 1) (variables.push basisVariable)
+          continuation
+  else
+    continuation variables
+
+private def projections (problem : Problem.Input)
+    (alternative : Unification.Certificate.Alternative)
+    (basis : Array Expr) : MetaM (Expr × Expr × Expr) := do
+  let mut images := #[]
+  for image in alternative.images do
+    images := images.push (← whnf
+      (Unification.Certificate.instantiateImage image basis))
+  let ruleCount := problem.rule.closure.arguments.size
+  let sourceCount := problem.source.closure.arguments.size
+  unless images.size == ruleCount + sourceCount do
+    throwError "a narrowing alternative has the wrong number of images"
+  let ruleArguments := images.extract 0 ruleCount
+  let sourceArguments := images.extract ruleCount images.size
+  let ruleValue ← withTransparency .all <|
+    whnf (mkAppN problem.rule.value ruleArguments)
+  let sourceValue ← withTransparency .all <|
+    whnf (mkAppN problem.source.value sourceArguments)
+  let rhs ← withTransparency .all <|
+    whnf (← mkAppM ``RuleBody.rhs #[ruleValue])
+  let ruleRequires ← withTransparency .all <|
+    whnf (← mkAppM ``RuleBody.requires #[ruleValue])
+  let sourceRequires ← withTransparency .all <|
+    whnf (← mkAppM ``PatternBody.requires #[sourceValue])
+  return (rhs, sourceRequires, ruleRequires)
+
+/-- Turn one backend alternative into its constrained successor closure. -/
+def successor (problem : Problem.Input)
+    (alternative : Unification.Certificate.Alternative) : MetaM Expr := do
+  withBasisVariables alternative.basisTypes 0 #[] fun basis => do
+    let (rhs, sourceRequires, ruleRequires) ←
+      projections problem alternative basis
+    let requires ← mkAppM ``And #[sourceRequires, ruleRequires]
+    let body ← mkAppM ``PatternBody.mk #[rhs, requires]
+    mkLambdaFVars basis body
+
+private def empty (problem : Problem.Input) : MetaM Expr := do
+  let stateType ← inferType problem.rule.lhs
+  let .sort (.succ level) ← whnf (← inferType stateType)
+    | throwError "the narrowing state is not a type"
+  return mkApp (mkConst ``EmptyPattern.empty [level]) stateType
+
+private def disjoin (left right : Expr) : MetaM Expr :=
+  mkAppM ``Disjunction.mk #[left, right]
+
+/--
+Materialize every MGU as an atomic successor and combine the successors into
+the complete `Pattern` post.  The free backend yields zero or one successor;
+the fold already supports a future multi-unifier backend.
+-/
+def post (problem : Problem.Input)
+    (alternatives : Array Unification.Certificate.Alternative) : MetaM Post := do
+  let value ← if alternatives.isEmpty then
+      empty problem
+    else
+      let mut value ← successor problem alternatives[alternatives.size - 1]!
+      for alternative in alternatives.toList.dropLast.reverse do
+        value ← disjoin (← successor problem alternative) value
+      pure value
+  return { type := ← inferType value, value }
+
+end Materialization
+
+
+namespace Certification
+
+/--
+Find the definition, if any, that directly supplies a rule or pattern closure.
+For example, both `advance` and `fun x y => advance x y` select `advance`.
+Record constructors and fully inline closures need no extra unfolding lemma.
+-/
+private partial def closureDefinition? (expression : Expr) : Option Name :=
+  match expression.consumeMData with
+  | .lam _ _ body _ => closureDefinition? body
+  | .letE _ _ _ body _ => closureDefinition? body
+  | expression =>
+      match expression.getAppFn with
+      | .const name _ => some name
+      | _ => none
+
+private def unfoldingDefinitions
+    (goalInput : Goal.Input) : CoreM (Array Name) := do
+  let environment ← getEnv
+  let mut result := #[]
+  for expression in #[goalInput.rule, goalInput.source] do
+    let some name := closureDefinition? expression | continue
+    let isDefinition := match environment.find? name with
+      | some (.defnInfo _) | some (.opaqueInfo _) => true
+      | _ => false
+    if isDefinition && !result.contains name then
+      result := result.push name
+  return result
+
+/--
+Certify that the materialized post is the complete one-step image.  This
+prototype replays free constructor reasoning with `simp` and `grind`; an AC
+backend can replace this namespace with certificate replay for its theory.
+-/
+def prove (ref : Syntax) (goalInput : Goal.Input)
+    (ruleSyntax sourceSyntax : TSyntax `term) (postIdent : Ident) :
+    TacticM Ident := do
+  let narrowingIdent ←
+    Unification.Presentation.freshVisibleIdent ref `narrowing
+  let unfoldNames ← unfoldingDefinitions goalInput
+  let unfoldSimps ← unfoldNames.mapM fun name =>
+    `(Parser.Tactic.simpLemma| $(mkIdent name):ident)
+  try
+    evalTactic (← `(tactic|
+      have $narrowingIdent:ident :
+          NarrowsTo $ruleSyntax $sourceSyntax ($postIdent:term) := by
+        simp [NarrowsTo, postImage, Pattern.semantics,
+          AtPattern.semantics, AtRule.semantics,
+          $postIdent:term, $unfoldSimps,*] <;>
+          grind))
+  catch exception =>
+    throwErrorAt ref m!"failed to certify the generated narrowing post:\n{exception.toMessageData}"
+  return narrowingIdent
+
+end Certification
 
 
 namespace Tactic
@@ -935,23 +1038,37 @@ private def checkUserTerms
   unless ← isDefEq source goalInput.source do
     throwErrorAt sourceSyntax "this is not the source pattern in the `mapsInto` goal"
 
-/-- Perform one certified constrained narrowing step in a `mapsInto` proof. -/
-def run (ref ruleSyntax sourceSyntax : Syntax) : TacticM Unit := do
-  let initialGoal ← getMainGoal
-  let (problem, output) ← initialGoal.withContext do
-    let goalInput ← Goal.ofMapsIntoType (← initialGoal.getType)
-    checkUserTerms goalInput ruleSyntax sourceSyntax
-    let problem ← Problem.ofTerms goalInput.rule goalInput.source
-    let output ← Backend.solve problem
-    return (problem, output)
+private def bindPost (ref : Syntax) (post : Materialization.Post) :
+    TacticM Ident := do
+  let goal ← getMainGoal
+  let name ← goal.withContext do
+    return (← getLCtx).getUnusedName `post
+  let goal ← goal.define name post.type post.value
+  let (_, goal) ← goal.intro1P
+  setGoals [goal]
+  return mkIdentFrom ref name
 
-  let witnesses ← Semantics.expose ref problem
-  let proven ← try
-      Backend.certify output witnesses
-    catch exception =>
-      throwErrorAt ref exception.toMessageData
-  Unification.Presentation.expose proven
-  Semantics.clearStructural witnesses
+/--
+Generate and bind the exact one-step post, prove its narrowing judgment, and
+reduce a `mapsInto` goal to subsumption of that generated post.
+-/
+def run (ref : Syntax) (ruleSyntax sourceSyntax : TSyntax `term) : TacticM Unit := do
+  let initialGoal ← getMainGoal
+  let (goalInput, generatedPost) ← initialGoal.withContext do
+    let goalInput ← Goal.ofMapsIntoType (← initialGoal.getType)
+    checkUserTerms goalInput ruleSyntax.raw sourceSyntax.raw
+    let problem ← Problem.ofTerms goalInput.rule goalInput.source
+    let solutionSet ← Backend.solve problem
+    let generatedPost ← Materialization.post problem solutionSet.alternatives
+    return (goalInput, generatedPost)
+
+  let postIdent ← bindPost ref generatedPost
+  let narrowingIdent ← Certification.prove ref goalInput
+    ruleSyntax sourceSyntax postIdent
+
+  evalTactic (← `(tactic|
+    apply mapsInto_of_narrowsTo_of_subsumes
+      ($narrowingIdent:term)))
 
 end Tactic
 
@@ -959,7 +1076,7 @@ end Narrowing
 
 /-- Perform one constrained narrowing step for a single rule and source. -/
 elab "narrow " rule:term " against " source:term : tactic =>
-  Narrowing.Tactic.run rule.raw rule.raw source.raw
+  Narrowing.Tactic.run rule.raw rule source
 
 end free_unification
 
@@ -1137,18 +1254,12 @@ def advance (payload next : Nat) : RuleBody Conf where
   rhs := pair (atom payload) (atom next)
   requires := next = payload + 1
 
-example : mapsInto advance source target := by
+example : advance ⊢ source ↪ target := by
   narrow advance against source
-  -- One branch exposes basis values and equations in the same stable shape as
-  -- `unify`, while retaining the instantiated source/rule constraints.
-  guard_hyp u1 : Nat
-  guard_hyp u2 : Nat
-  guard_hyp h1 : payload = u1
-  guard_hyp h2 : next = u2
-  guard_hyp h3 : n = u1
-  guard_hyp source_requires : (source n).requires
-  guard_hyp rule_requires : (advance payload next).requires
-  refine ⟨u1, ?_, ?_⟩ <;> simp_all [source, advance, target]
+  -- `post` is generated by the tactic; the user supplies no intermediate
+  -- pattern.  Only the subsumption phase remains.
+  simp [Subsumes, Pattern.semantics, AtPattern.semantics, post, target]
+  grind
 
 /-- A rule whose constructor-headed LHS cannot match `source`. -/
 def blocked : RuleBody Conf where
@@ -1157,8 +1268,9 @@ def blocked : RuleBody Conf where
 
 -- With no structural unifier, the assumed step is impossible and `narrow`
 -- closes the `mapsInto` proof.  No special lemma about `blocked` is supplied.
-example : mapsInto blocked source target := by
+example : blocked ⊢ source ↪ target := by
   narrow blocked against source
+  simp [Subsumes, Pattern.semantics, AtPattern.semantics]
 
 /- This LHS matches `source`, but its constraint requires the matched positive
 payload to be zero. -/
@@ -1169,13 +1281,8 @@ def constrainedOut (payload : Nat) : RuleBody Conf where
 
 -- Structural unification returns an MGU branch.  Its instantiated constraints
 -- are `0 < n` and `payload = 0`, so the constraints filter that branch out.
-example : mapsInto constrainedOut source target := by
+example : constrainedOut ⊢ source ↪ target := by
   narrow constrainedOut against source
-  guard_hyp u1 : Nat
-  guard_hyp h1 : payload = u1
-  guard_hyp h2 : n = u1
-  guard_hyp source_requires : (source n).requires
-  guard_hyp rule_requires : (constrainedOut payload).requires
-  simp_all [source, constrainedOut]
+  simp [Subsumes, Pattern.semantics, AtPattern.semantics, post]
 
 end narrowing_examples
