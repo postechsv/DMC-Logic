@@ -56,6 +56,36 @@ def «assume» (P : Prop) : ◯P :=
 
 end Lax
 
+/-- One binding in `lax do` notation. -/
+declare_syntax_cat laxDoBind
+syntax ident " ← " term ";" : laxDoBind
+
+/--
+`lax do` notation for sequencing lax proofs.  A block
+
+```lean
+lax do
+  x ← mx;
+  y ← my x;
+  return result x y
+```
+
+expands to nested applications of `Lax.bind`, with `Lax.ret` around the
+returned value.  Unlike ordinary `do`, this notation also supports payloads
+in `Prop`.
+-/
+syntax:lead "lax" " do " laxDoBind* "return " term : term
+
+macro_rules
+  | `(lax do $[$binds:laxDoBind]* return $result:term) => do
+      let mut expansion ← `(Lax.ret $result)
+      for bind in binds.reverse do
+        match bind with
+        | `(laxDoBind| $x:ident ← $action:term;) =>
+          expansion ← `(Lax.bind $action fun $x => $expansion)
+        | _ => pure ()
+      return expansion
+
 
 
 namespace UnifExample
@@ -108,7 +138,9 @@ Using our Lax modality
 
 
 
-variable {T1_EQ_T2 GOAL : Prop} -- theorem: T1_EQ_T2 → GOAL
+-- main theorem: T1_EQ_T2 → GOAL
+axiom T1_EQ_T2 : Prop
+axiom GOAL : Prop
 
 axiom MGU1 : Prop
 axiom MGU2 : Prop
@@ -136,16 +168,31 @@ def lax_main : ◯(T1_EQ_T2 → GOAL) :=
       | Or.inr (Or.inl h2) => easy_proof2 h2
       | Or.inr (Or.inr h3) => easy_proof3 h3
 
--- alternative proof in imperative style
-def lax_main' : ◯(T1_EQ_T2 → GOAL) := by
-  apply Lax.bind (unif_tactic T1_EQ_T2)
-  intro cert_hole
-  apply Lax.ret
-  intro hEq
-  rcases cert_hole hEq with h1 | h2 | h3
-  · exact easy_proof1 h1
-  · exact easy_proof2 h2
-  · exact easy_proof3 h3
+-- The same monadic proof using imperative-style notation.
+def lax_main' : ◯(T1_EQ_T2 → GOAL) := lax do
+  cert_hole ← unif_tactic T1_EQ_T2;
+  return by
+    intro hEq
+    rcases cert_hole hEq with h1 | h2 | h3
+    · exact easy_proof1 h1
+    · exact easy_proof2 h2
+    · exact easy_proof3 h3
+
+-- The same proof via the monotonicity axiom, with an ordinary tactic proof as the map.
+def lax_main_mono : ◯(T1_EQ_T2 → GOAL) :=
+  mono
+    (α := T1_EQ_T2 → MGU1 ∨ MGU2 ∨ MGU3)
+    (β := T1_EQ_T2 → GOAL)
+    (by
+      intro cert_hole hEq
+      rcases cert_hole hEq with h1 | h2 | h3
+      · exact easy_proof1 h1
+      · exact easy_proof2 h2
+      · exact easy_proof3 h3)
+    (unif_tactic T1_EQ_T2)
+
+
+
 
 
 /- STEP 2 : fill in the certification hole -/
