@@ -108,7 +108,7 @@ Using our Lax modality
 
 
 
-variable {T1_EQ_T2 GOAL : Prop}
+variable {T1_EQ_T2 GOAL : Prop} -- theorem: T1_EQ_T2 → GOAL
 
 axiom MGU1 : Prop
 axiom MGU2 : Prop
@@ -127,6 +127,7 @@ def unif_tactic (T1_EQ_T2 : Prop) : ◯(T1_EQ_T2 → MGU1 ∨ MGU2 ∨ MGU3)
 
 
 /- STEP 1 : finish the proof modulo certification -/
+-- cert_hole = proof obligation
 def lax_main : ◯(T1_EQ_T2 → GOAL) :=
   bind (unif_tactic T1_EQ_T2) fun cert_hole =>
     ret fun hEq =>
@@ -134,6 +135,17 @@ def lax_main : ◯(T1_EQ_T2 → GOAL) :=
       | Or.inl h1 => easy_proof1 h1
       | Or.inr (Or.inl h2) => easy_proof2 h2
       | Or.inr (Or.inr h3) => easy_proof3 h3
+
+-- alternative proof in imperative style
+def lax_main' : ◯(T1_EQ_T2 → GOAL) := by
+  apply Lax.bind (unif_tactic T1_EQ_T2)
+  intro cert_hole
+  apply Lax.ret
+  intro hEq
+  rcases cert_hole hEq with h1 | h2 | h3
+  · exact easy_proof1 h1
+  · exact easy_proof2 h2
+  · exact easy_proof3 h3
 
 
 /- STEP 2 : fill in the certification hole -/
@@ -146,6 +158,7 @@ Our decomposition: MGUs appears only implicitly
   (main proof) T1_EQ_T2 (→ MGU1 ∨ MGU2 ∨ MGU3) → GOAL
   (certification) T1_EQ_T2 → GOAL
 => automatic unification is a LOCAL proof tactic
+=> encapsulation
 
 Traditional decomposition: MGUS appears explicitly
   (certification) T1_EQ_T2 → MGU1 ∨ MGU2 ∨ MGU3
@@ -153,12 +166,12 @@ Traditional decomposition: MGUS appears explicitly
 => automatic unification is a GLOBAL meta-programming
 => i.e., modifies the global codebase
 
-Monolithic:
+Monolithic (= using `sorry`):
   (main proof & certification) T1_EQ_T2 → GOAL
 => nothing can be justified unless proof is complete
 => tactic could be used locally, but less modular
 
-Our lax typing allows MODULAR & LOCAL proof workflow!
+Our lax typing allows COMPOSITIONALITY & ENCAPSULATION
 
 TODO: main explicit example for traditional workflow
 -/
