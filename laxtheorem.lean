@@ -120,11 +120,9 @@ axiom easy_proof3 : MGU3 → GOAL
 
 axiom completeness_pf : T1_EQ_T2 → MGU1 ∨ MGU2 ∨ MGU3
 
-/-- tactic -/
-def unif_tactic (T1_EQ_T2 : Prop) : ◯(T1_EQ_T2 → MGU1 ∨ MGU2 ∨ MGU3)
-  := assume (T1_EQ_T2 → MGU1 ∨ MGU2 ∨ MGU3)
 -- MGU's appear explicitly only for illustrative purpose
--- in pratice, those MGU's will be generated dynamically
+def unif_tactic (T1_EQ_T2 : Prop) : ◯(T1_EQ_T2 → MGU1 ∨ MGU2 ∨ MGU3)
+  := assume (T1_EQ_T2 → MGU1 ∨ MGU2 ∨ MGU3) -- generated dynamically
 
 
 
@@ -138,22 +136,29 @@ def lax_main : ◯(T1_EQ_T2 → GOAL) :=
       | Or.inr (Or.inr h3) => easy_proof3 h3
 
 
-/- STEP 2 : combine the certification & main proof -/
+/- STEP 2 : fill in the certification hole -/
 theorem main : T1_EQ_T2 → GOAL :=
   (lax_main).certify ⟨completeness_pf, trivial⟩
 
 
 /-
-Our workflow: MGUs appears only implicitly
-(main proof) T1_EQ_T2 (→ MGU1 ∨ MGU2 ∨ MGU3) → GOAL
-(certification) T1_EQ_T2 → GOAL
+Our decomposition: MGUs appears only implicitly
+  (main proof) T1_EQ_T2 (→ MGU1 ∨ MGU2 ∨ MGU3) → GOAL
+  (certification) T1_EQ_T2 → GOAL
 => automatic unification is a LOCAL proof tactic
 
-Tranditional workflow: MGUS appears explicitly
-(certification) T1_EQ_T2 → MGU1 ∨ MGU2 ∨ MGU3
-(main proof) theorem T1_EQ_T2 → GOAL
+Traditional decomposition: MGUS appears explicitly
+  (certification) T1_EQ_T2 → MGU1 ∨ MGU2 ∨ MGU3
+  (main proof) theorem T1_EQ_T2 → GOAL
 => automatic unification is a GLOBAL meta-programming
 => i.e., modifies the global codebase
+
+Monolithic:
+  (main proof & certification) T1_EQ_T2 → GOAL
+=> nothing can be justified unless proof is complete
+=> tactic could be used locally, but less modular
+
+Our lax typing allows MODULAR & LOCAL proof workflow!
 
 TODO: main explicit example for traditional workflow
 -/
