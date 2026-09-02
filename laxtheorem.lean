@@ -178,22 +178,6 @@ def lax_main' : ◯(T1_EQ_T2 → GOAL) := lax do
     · exact easy_proof2 h2
     · exact easy_proof3 h3
 
--- The same proof via the monotonicity axiom, with an ordinary tactic proof as the map.
-def lax_main_mono : ◯(T1_EQ_T2 → GOAL) :=
-  mono
-    (α := T1_EQ_T2 → MGU1 ∨ MGU2 ∨ MGU3)
-    (β := T1_EQ_T2 → GOAL)
-    (by
-      intro cert_hole hEq
-      rcases cert_hole hEq with h1 | h2 | h3
-      · exact easy_proof1 h1
-      · exact easy_proof2 h2
-      · exact easy_proof3 h3)
-    (unif_tactic T1_EQ_T2)
-
-
-
-
 
 /- STEP 2 : fill in the certification hole -/
 theorem main : T1_EQ_T2 → GOAL :=
