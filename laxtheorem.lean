@@ -118,12 +118,13 @@ axiom easy_proof1 : MGU1 → GOAL
 axiom easy_proof2 : MGU2 → GOAL
 axiom easy_proof3 : MGU3 → GOAL
 
-axiom completeness : T1_EQ_T2 → MGU1 ∨ MGU2 ∨ MGU3
+axiom completeness_pf : T1_EQ_T2 → MGU1 ∨ MGU2 ∨ MGU3
 
 /-- tactic -/
-def unif_tactic (T1_EQ_T2 : Prop) :
-    ◯(T1_EQ_T2 → MGU1 ∨ MGU2 ∨ MGU3) :=
-  assume (T1_EQ_T2 → MGU1 ∨ MGU2 ∨ MGU3)
+def unif_tactic (T1_EQ_T2 : Prop) : ◯(T1_EQ_T2 → MGU1 ∨ MGU2 ∨ MGU3)
+  := assume (T1_EQ_T2 → MGU1 ∨ MGU2 ∨ MGU3)
+-- MGU's appear explicitly only for illustrative purpose
+-- in pratice, those MGU's will be generated dynamically
 
 
 
@@ -137,16 +138,25 @@ def lax_main : ◯(T1_EQ_T2 → GOAL) :=
       | Or.inr (Or.inr h3) => easy_proof3 h3
 
 
-/- STEP 2 : prove the ceritification -/
-lemma cert_pf : T1_EQ_T2 → MGU1 ∨ MGU2 ∨ MGU3 := completeness
--- note that this proof could be non-trivial (e.g., proving diophantine equations)
-
-
-/- STEP 3 : combine the certification & main proof -/
+/- STEP 2 : combine the certification & main proof -/
 theorem main : T1_EQ_T2 → GOAL :=
-  (lax_main).certify ⟨cert_pf, trivial⟩
+  (lax_main).certify ⟨completeness_pf, trivial⟩
 
 
+/-
+Our workflow: MGUs appears only implicitly
+(main proof) T1_EQ_T2 (→ MGU1 ∨ MGU2 ∨ MGU3) → GOAL
+(certification) T1_EQ_T2 → GOAL
+=> automatic unification is a LOCAL proof tactic
+
+Tranditional workflow: MGUS appears explicitly
+(certification) T1_EQ_T2 → MGU1 ∨ MGU2 ∨ MGU3
+(main proof) theorem T1_EQ_T2 → GOAL
+=> automatic unification is a GLOBAL meta-programming
+=> i.e., modifies the global codebase
+
+TODO: main explicit example for traditional workflow
+-/
 
 
 end UnifExample
