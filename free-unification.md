@@ -1,20 +1,22 @@
-# Certified free unification and narrowing in Lean
+# Free unification and narrowing with explicit certification in Lean
 
 This document explains the prototype implemented in `free-unification.lean`.
 It is written top-down: first the mathematical idea and the public proof
 experience, then the orchestration layer, and finally the individual solver
-and certification components.
+and certification components.  In particular, solver execution and the proof
+that its answer is complete are deliberately separate.
 
 The main design objective is:
 
-> Compute unifiers using a replaceable backend, but expose only a stable,
-> proof-producing interface consisting of basis variables, substitution
-> equations, and possibly several alternatives.
+> Let a replaceable backend compute candidate unifiers; automatically check
+> that every candidate is sound; then make completeness an explicit Lean proof
+> obligation before exposing basis variables and substitution equations.
 
 The current implementation includes:
 
 - semantic constrained patterns represented by ordinary Lean closures;
-- a certified free-unification tactic based on Lean's native unifier;
+- a free-unification tactic based on Lean's native unifier with kernel-checked
+  soundness and a user-level completeness obligation;
 - a prototype unifier for free commutative symbols;
 - a uniform, arbitrary-arity equational-module interface;
 - one-step constrained narrowing built as a client of the unification result
@@ -163,7 +165,8 @@ x2 ↦ c
 y1 ↦ u1.
 ```
 
-The certified proposition exposed by the tactic is conceptually:
+After completeness has been established, the factorization exposed in the
+result branch is:
 
 ```text
 ∃ u1,
@@ -175,7 +178,45 @@ The certified proposition exposed by the tactic is conceptually:
 The basis value `u1` is not an object term and does not require a `Conf.var`
 constructor. It is an ordinary Lean local of type `Conf`.
 
-#### 1.1.4 Multiple MGUs are a disjunction of factorizations
+#### 1.1.4 Soundness and completeness are different obligations
+
+For a computed alternative `σᵢ`, soundness means that every assignment to its
+basis variables really unifies the equation:
+
+```text
+for every basis u,
+  lhs(σᵢ(u)) = rhs(σᵢ(u)).
+```
+
+This direction is normally easy: substitute the proposed images and simplify.
+The framework checks it automatically for every returned branch. If one check
+fails, `unify` stops instead of presenting the candidate. The original
+unifiability hypothesis is cleared from the checking goal, so soundness cannot
+be proved circularly from `h`.
+
+Completeness is the difficult direction. For a returned solution set `S`, it
+means that every solution of the original equation factors through some member
+of `S`:
+
+```text
+for every original argument tuple x,
+  lhs(x) = rhs(x) implies
+    factorization₁(x) or ... or factorizationₙ(x).
+```
+
+`unify` deliberately emits this proposition as its first proof goal. It is
+independent of the particular hypothesis `h`; the tactic clears `h` from this
+goal. The user may prove it manually, invoke `unify_complete`, or later invoke
+an axiom-specific/external certificate checker. Only after this goal is solved
+does Lean permit the result branches to depend on the certificate.
+
+Soundness is still mathematically necessary when the result is advertised as
+a solution set or used to construct an exact narrowing image. Completeness
+alone suffices only for the narrower operation performed by `unify h`: deriving
+that the concrete witnesses inside `h` belong to one returned branch. Keeping
+both properties in `ExactSolutionSet` makes the boundary reusable.
+
+#### 1.1.5 Multiple MGUs are a disjunction of factorizations
 
 Free unification is unitary: a solvable problem has one MGU up to renaming.
 Other equational axioms can produce a finite complete set of MGUs.
@@ -186,9 +227,10 @@ The common logical result is therefore:
 factorization₁ ∨ factorization₂ ∨ ... ∨ factorizationₙ.
 ```
 
-The three important cases are:
+After the completeness goal, the three important result cases are:
 
-- zero alternatives: the unifiability hypothesis implies `False`;
+- zero alternatives: completeness says the original equation is impossible,
+  so the unifiability hypothesis closes the result goal;
 - one alternative: one factorization is opened in the current goal; and
 - several alternatives: the proof is split into one goal per factorization.
 
@@ -196,7 +238,7 @@ This is why the free solver already returns a solution **set**, even though it
 can contain at most one element. The same output interface can later carry C,
 AC, ACU, or external-oracle results.
 
-#### 1.1.5 Narrowing is unification followed by substitution
+#### 1.1.6 Narrowing is unification followed by substitution
 
 A constrained rewrite rule is also a closure:
 
@@ -292,15 +334,22 @@ The public proof is:
 ```lean
 example (h : pat1 ⋈ pat2) : True := by
   unify h
-  guard_hyp u1 : Conf
-  guard_hyp h1 : x1 = f u1 c
-  guard_hyp h2 : x2 = c
-  guard_hyp h3 : y1 = u1
-  exact True.intro
+  · -- completeness of the computed singleton solution set
+    intros
+    simp_all
+  · -- result branch, available only through that certificate
+    guard_hyp u1 : Conf
+    guard_hyp h1 : x1 = f u1 c
+    guard_hyp h2 : x2 = c
+    guard_hyp h3 : y1 = u1
+    exact True.intro
 ```
 
-The `guard_hyp` lines are regression checks, not obligations imposed by the
-tactic. A user normally continues reasoning with `u1`, `h1`, `h2`, and `h3`.
+The first bullet could instead be `· unify_complete`. The direct proof is
+shown to emphasize that completeness belongs to the user proof, not to the
+solver. The `guard_hyp` lines are regression checks, not obligations imposed
+by the tactic. A user normally continues reasoning with `u1`, `h1`, `h2`, and
+`h3`.
 
 #### Running example N: narrowing and subsumption
 
@@ -375,9 +424,11 @@ Public judgments and tactics
 │   ├── Tactic                     top-level orchestrator
 │   │   ├── Problem                extract a first-order equation
 │   │   ├── PresentationElaboration choose free or C from EqModule
-│   │   ├── Free or C              compute and certify alternatives
+│   │   ├── Free or C              compute candidate alternatives
+│   │   ├── soundness checker      reject invalid candidates automatically
+│   │   ├── completeness boundary  emit a user-level theorem goal
 │   │   └── Presentation           expose basis variables/equations
-│   └── Certificate                backend-neutral interchange format
+│   └── Certificate                solution/sound/exact interchange formats
 │
 └── Narrowing
     ├── Problem                    form rule.lhs = source.term
@@ -402,7 +453,10 @@ Problem.Input
 backend-private computation
      │
      ▼
-Certificate.SolutionSet / ProvenSolutionSet
+Certificate.SolutionSet
+     │
+     ├── automatic soundness check
+     └── user-level completeness proof
      │
      ├── Presentation: user proof context
      └── Narrowing.Materialization: generated post
@@ -499,9 +553,12 @@ The public tactics are:
 unify h                  -- free backend
 c_unify h                -- explicit C backend
 unify h in M             -- dispatch according to M
+unify_complete           -- optional completeness automation
 ```
 
-All successful forms expose the same basis-and-equations interface.
+All successful forms expose the same goal order and basis-and-equations
+interface. `unify_complete` is not part of the solver contract; it is one
+possible tactic for proving the first ordinary Lean goal.
 
 #### 2.1.4 Narrowing judgments
 
@@ -540,10 +597,24 @@ after solving.
 
 The output order is part of the public interface:
 
-1. basis locals named `u1`, `u2`, ...;
-2. one equation for every original pattern argument;
-3. arguments ordered left pattern first, then right pattern; and
-4. equations named `h1`, `h2`, ....
+1. one completeness goal for the entire computed solution set;
+2. then one result goal for every alternative;
+3. within each result, basis locals named `u1`, `u2`, ...;
+4. one equation for every original pattern argument;
+5. arguments ordered left pattern first, then right pattern; and
+6. equations named `h1`, `h2`, ....
+
+For running example F, the first goal is essentially:
+
+```text
+for all x1 x2 y1,
+  f x1 x2 = f (f y1 c) c implies
+  there exists u1,
+    x1 = f u1 c and x2 = c and y1 = u1.
+```
+
+Notice that the local `h : pat1 ⋈ pat2` is absent. This prevents the
+certificate from proving only the one witness already stored in `h`.
 
 For running example F, the original arguments are `[x1, x2, y1]`, so the
 output is:
@@ -558,9 +629,10 @@ h3 : y1 = u1
 Neither Lean's internal metavariable names nor an external solver's textual
 binding order determines this interface.
 
-If a solver returns several alternatives, each goal independently receives
-locals named from `u1` and equations named from `h1`. If it returns none, the
-original goal is closed using a certified contradiction.
+Once completeness is solved, each alternative goal independently receives
+locals named from `u1` and equations named from `h1`. If the solver returns no
+alternatives, completeness has codomain `False`; its specialization to the
+semantic equality extracted from `h` closes the original goal.
 
 ---
 
@@ -593,12 +665,8 @@ Its abstract backend interface is:
 solve
   : Problem.Input → MetaM Output
 
-certify
-  : Output
-  → actual arguments
-  → actual identifiers
-  → irrelevant semantic hypotheses
-  → TacticM Certificate.ProvenSolutionSet
+solutions
+  : Output → Certificate.SolutionSet
 ```
 
 `runWith` executes the complete outer workflow:
@@ -607,19 +675,30 @@ certify
 1. Read p and q from the type of h.
 2. Build Problem.Input using fresh symbolic metavariables.
 3. Call the selected backend's solve function.
-4. Open the semantic witnesses stored in h.
-5. Derive the concrete equality between instantiated pattern terms.
-6. Ask the backend to certify its computed result from that equality.
-7. Pass the proof to Presentation.expose.
-8. Clear semantic bookkeeping, leaving only public locals and equations.
+4. Translate its output to Certificate.SolutionSet.
+5. Prove soundness of every candidate automatically.
+6. Construct a universally quantified completeness proposition.
+7. Insert that proposition as an unresolved, first user-level goal.
+8. In a dependent continuation, assume its eventual proof.
+9. Open the semantic witnesses stored in h and derive their concrete equality.
+10. Specialize completeness to obtain the factorization disjunction.
+11. Pass that proof to Presentation.expose.
+12. Clear semantic bookkeeping and return completeness before result goals.
 ```
+
+The continuation in step 8 is important. The result goals may use the
+completeness certificate, but Lean keeps the metavariable for that certificate
+as the preceding proof obligation. There is no unchecked handoff.
 
 #### Boundary of `Unification.Tactic`
 
-- **Receives:** a hypothesis identifier and a pair of backend functions.
-- **Returns:** modified Lean goals containing only public unifier data.
+- **Receives:** a hypothesis identifier, one solver, and one projection from
+  solver output to the common `SolutionSet`.
+- **Returns:** a completeness goal followed by ordinary result goals containing
+  the public unifier data.
 - **Depends on:** `Problem`, one backend, `Certificate`, and `Presentation`.
-- **Does not know:** the algorithm used to find substitutions.
+- **Does not know:** the algorithm used to find substitutions or how the user
+  will discharge completeness.
 
 This is the main replacement seam for a future solver.
 
@@ -691,7 +770,8 @@ same saturated left and right equation.
 
 ### 3.3 Child: exposing the semantic equality
 
-Computation uses the fresh metavariables in `Problem.Input`, but certification
+Computation uses the fresh metavariables in `Problem.Input`. Completeness is
+stated universally over fresh ordinary variables, while result presentation
 must concern the actual witnesses contained in `h`.
 
 `Tactic.exposeSemantics` destructs `h` in this order:
@@ -717,8 +797,8 @@ For running example F this becomes the kernel-checked equality:
 f x1 x2 = f (f y1 c) c.
 ```
 
-This equality, not the mutable assignments produced during solving, is the
-foundation of the final certificate.
+This equality, together with the universal completeness theorem, is the
+foundation of the factorization proof for this particular `h`.
 
 ### 3.4 Child: `Unification.Certificate`
 
@@ -761,10 +841,39 @@ structure SolutionSet where
 This is computational data. It can be consumed by narrowing before a
 user-facing factorization proof is opened.
 
-#### 3.4.3 Proven results
+#### 3.4.3 Sound and exact results
 
-`ProvenAlternative` pairs one alternative with its factorization proposition
-and proof. `ProvenSolutionSet` contains:
+The proof boundary has three levels:
+
+```text
+SolutionSet
+  computational candidates only
+
+SoundSolutionSet
+  SolutionSet plus one universally quantified soundness proposition/proof
+  per alternative
+
+ExactSolutionSet
+  SoundSolutionSet plus one universally quantified completeness
+  proposition/proof for the entire set
+```
+
+In Lean, the latter two are represented as:
+
+```lean
+structure SoundSolutionSet where
+  solutionSet : SolutionSet
+  soundnessPropositions : Array Expr
+  soundnessProofs : Array Expr
+
+structure ExactSolutionSet extends SoundSolutionSet where
+  completenessProposition : Expr
+  completenessProof : Expr
+```
+
+`ProvenAlternative` and `ProvenSolutionSet` are downstream presentation
+packages. They pair the actual witnesses extracted from one `h` with the
+factorization proposition needed to open basis variables:
 
 ```lean
 structure ProvenSolutionSet where
@@ -792,28 +901,38 @@ array becomes `False`.
 
 #### 3.4.4 Exact logical strength of the current certificate
 
-The proof inside `ProvenSolutionSet` is constructed in the local context
-obtained by opening `h : p ⋈ q`. It proves that the **actual witnesses carried
-by `h`** factor through at least one returned alternative. This is the
-coverage/completeness fact required by the user-facing tactic.
+The two universal properties are generated from `Problem.Input` and do not
+depend on the semantic witness `h`.
 
-It is not yet a standalone, first-class theorem saying, independently of `h`,
-that every returned lambda substitution unifies the two symbolic terms for
-all basis values. The current free and C backends compute such substitutions
-and replay enough reasoning to establish the factorization disjunction, but
-the certificate data type records coverage rather than a separate soundness
-theorem for each branch.
+For each alternative `σᵢ`, `soundnessType` states:
 
-This distinction does not compromise Lean's logical soundness: every fact
-placed in the user's context still has a kernel-checked proof. It does matter
-for backend validation and usability. A future external-oracle boundary should
-either enrich each alternative with an independent unifier proof or validate
-that property during certificate replay, in addition to proving coverage.
+```text
+∀ basis, lhs(σᵢ(basis)) = rhs(σᵢ(basis)).
+```
+
+For the whole set, `completenessType` states:
+
+```text
+∀ original arguments,
+  lhs(arguments) = rhs(arguments) →
+  solutionSetType S arguments.
+```
+
+Together these justify calling the returned set exact: it contains only
+unifiers, and every unifier factors through one of them. The implication form
+of completeness is intentional. Soundness supplies the converse information
+branch by branch without forcing one large biconditional theorem.
+
+After the user proves completeness, `runWith` specializes it to the actual
+arguments and equality extracted from `h`. That produces the local
+`ProvenSolutionSet` consumed by `Presentation`. Thus the local factorization
+proof is a consequence of a stronger, hypothesis-independent certificate.
 
 #### Boundary of `Unification.Certificate`
 
 - **Receives:** basis types and closed substitution images from any solver.
-- **Returns:** a canonical factorization formula or disjunction.
+- **Returns:** canonical candidate, sound-solution, exact-solution, and local
+  factorization packages.
 - **Depends on:** only original argument order and ordinary Lean equality,
   existential, conjunction, and disjunction.
 - **Does not know:** how alternatives were computed, what axioms were used,
@@ -849,39 +968,39 @@ with `?y1` residual. The backend then:
 
 The result is the `Certificate.Alternative` shown above.
 
-#### 3.5.2 Backend-private evidence
+#### 3.5.2 Backend output
 
-`Free.Candidate` adds `basisWitnesses` to the common alternative:
+`Free.Candidate` is now only a thin wrapper around the common alternative:
 
 ```lean
 structure Candidate where
   alternative : Certificate.Alternative
-  basisWitnesses : Array Nat
 ```
 
-These indices say which actual existential witness can instantiate each
-residual basis while constructing the proof. They are a private convenience
-for free certification and do not cross the `Certificate` boundary.
+No proof or witness chosen from the current `h` is stored in solver output.
+This is the key modularity change: `Free.solve` computes only data and has no
+`certify` callback. The generic orchestration layer gives that data its
+logical interpretation.
 
-#### 3.5.3 Success certification
+#### 3.5.3 Generic soundness checking
 
-`Free.certifySuccess` constructs the factorization proposition dictated by
-the candidate, introduces actual witnesses for its basis variables, and asks
-Lean to prove the resulting equations with `simp_all`.
+For the singleton returned by `Free.solve`, `Tactic.proveSoundness` constructs
+the universal equation obtained by substituting the candidate images and
+proves it with ordinary Lean tactics. For running example F the proposition
+reduces to:
 
-This separation matters:
+```text
+∀ u1, f (f u1 c) c = f (f u1 c) c.
+```
 
-- `isDefEq` proposes the substitution;
-- `Certificate.factorizationType` states its public meaning; and
-- the semantic equality extracted from `h` proves that meaning.
+This is why soundness is automatic: it checks a concrete proposed
+substitution, rather than discovering all solutions. Native `isDefEq` proposes
+the candidate; the kernel accepts it only after this separate proof succeeds.
 
-The tactic therefore does not trust an uninspected mutable metavariable state
-as a proof.
+#### 3.5.4 Failure completeness
 
-#### 3.5.4 Failure certification
-
-If `isDefEq` reports failure, `Free.certify` must prove that `h` is
-contradictory.
+If `isDefEq` returns no candidates, the user-level completeness goal says that
+the original equation implies `False`.
 
 There are two cases in the current fragment:
 
@@ -897,16 +1016,17 @@ For example:
 ```
 
 would imply `y = f y c`, contradicting finiteness of the inductive `Conf`
-term. The tactic produces a proof of `False` from `h` and can consequently
-close any target, not only a target already written as `False`.
+term. `unify_complete` can prove this using `SizeOf.sizeOf` and `omega`. That
+tactic is optional: the contradiction remains a normal goal the user can
+prove by any method.
 
 #### Boundary of `Unification.Free`
 
 - **Receives:** `Problem.Input`.
 - **Computes:** zero or one candidate using native unification.
-- **Certifies:** a complete zero-or-one `ProvenSolutionSet`.
-- **Exports:** only closed basis lambdas and kernel-checked factorization
-  proofs.
+- **Exports:** only closed basis lambdas through the common `SolutionSet`
+  interface.
+- **Does not certify:** completeness or inspect the semantic hypothesis.
 - **Assumes:** the supported free constructor fragment described later.
 
 ### 3.6 Leaf backend: `Unification.C`
@@ -961,16 +1081,26 @@ b ↦ u2                        b ↦ u1
 
 The common `SolutionSet` holds two `Alternative` values.
 
-#### 3.6.3 C certification and presentation
+#### 3.6.3 C soundness, completeness, and presentation
 
-`C.certify` builds the disjunction of both factorization formulas and proves
-it using `C.Operator.eq_iff`, `simp_all`, and `grind`.
+There is no C-specific `certify` callback. The same generic
+`Tactic.proveSoundness` used for free candidates checks both direct and swapped
+substitutions. The commutative branch reduces using the registered
+`C.Operator` laws.
+
+The solver does not prove that these two candidates exhaust all solutions.
+Instead `unify` presents the universal direct-or-swapped factorization as its
+first goal. In the prototype, `unify_complete` proves it using
+`C.Operator.eq_iff`, `simp_all`, and `grind`; a user or future certificate
+checker may replace that tactic.
 
 `Presentation.expose` then splits the disjunction, giving the user two goals:
 
 ```lean
 example (h : pairLeft ⋈[Module1] pairRight) : True := by
   unify h in Module1
+  · -- completeness of the direct-or-swapped result
+    unify_complete
   · -- direct branch with u1, u2, h1, ..., h4
     exact True.intro
   · -- swapped branch with u1, u2, h1, ..., h4
@@ -984,7 +1114,9 @@ contents of branches differ.
 
 `Presentation.expose` is the final axiom-independent layer.
 
-For each alternative it:
+After generic orchestration has specialized the user-supplied completeness
+proof to `h`, `Presentation.expose` receives a local factorization
+disjunction. For each alternative it:
 
 1. adds the certified factorization proof to the goal;
 2. opens each existential basis variable and names it `u1`, `u2`, ...;
@@ -1128,7 +1260,8 @@ The module interface is not yet the sole source of C information:
 
 - `EqModule` and `.commutative f_comm` select the C backend;
 - `C.Operator f` lets the C solver recognize `f` in a term; and
-- `C.Operator.eq_iff` certifies free-C decomposition and completeness.
+- `C.Operator.eq_iff` supplies free-C decomposition to the automatic
+  soundness check and optional completeness automation.
 
 Consequently the current example registers both:
 
@@ -1143,7 +1276,7 @@ noncomputable def Module1 : framework.EqModule where
 
 This duplication is a known prototype limitation, not the intended final
 contract. A future implementation should reify symbol declarations from the
-selected module and derive backend recognition and certificate replay from
+selected module and derive backend recognition and proof replay from
 module-owned information.
 
 In particular, C-operation discovery is currently global typeclass synthesis,
@@ -1227,14 +1360,14 @@ The current bridge calls:
 Unification.Free.solve problem.unification
 ```
 
-and immediately erases `Free.Candidate.basisWitnesses`, retaining only:
+and projects each thin `Free.Candidate` wrapper to:
 
 ```lean
 Unification.Certificate.SolutionSet.
 ```
 
 This demonstrates the intended dependency: post construction needs basis
-types and substitution images, not free-backend proof bookkeeping.
+types and substitution images, not backend-specific certification machinery.
 
 The current `narrow` tactic is free-only. It does not yet accept `in M` or use
 the C dispatcher. Generalizing this small `Narrowing.Backend` bridge is one of
@@ -1314,9 +1447,9 @@ It unfolds the relevant rule and source closure definitions, expands the
 semantic definitions, and currently uses `simp` plus `grind` to replay free
 constructor reasoning.
 
-This certification path is separate from `Free.certify`: narrowing consumes
-raw `SolutionSet` data to construct a new semantic object, then proves the
-meaning of that new object directly.
+This certification path is separate from the standalone `unify` workflow:
+narrowing consumes raw `SolutionSet` data to construct a new semantic object,
+then proves the meaning of that new object directly.
 
 For future AC narrowing, `Narrowing.Certification` must either replay the
 equational certificate or consume richer checked evidence from the backend.
@@ -1379,11 +1512,13 @@ Unification.Tactic.runWith
 │   ├── Unification.Free.solve
 │   └── Unification.C.solve
 │       └── Unification.Free.solve
+├── Tactic.proveSoundness
+│   └── Certificate.SoundSolutionSet
+├── Tactic.completenessType
+│   └── user proof goal (optionally `unify_complete`)
 ├── Tactic.exposeSemantics
-├── backend.certify
-│   ├── Unification.Free.certify
-│   └── Unification.C.certify
-│       └── C.Operator.eq_iff
+├── specialize completeness to the equality from h
+│   └── Certificate.ExactSolutionSet / ProvenSolutionSet
 └── Unification.Presentation.expose
     └── Unification.Certificate factorization structure
 ```
@@ -1414,7 +1549,9 @@ mapsInto_via_narrowing
 | `Free.solve` | saturated equation | private free candidates | yes |
 | `C.solve` | saturated equation | private C candidates | yes |
 | `Certificate` | basis and images | canonical solution-set language | intended stable boundary |
-| backend `certify` | candidates plus semantic witnesses | proven solution set | axiom-specific and replaceable |
+| `proveSoundness` | candidate solution set | per-branch universal proofs | proof procedure replaceable |
+| completeness boundary | candidate solution set | ordinary user theorem goal | yes; intended oracle/certificate seam |
+| `unify_complete` | completeness goal | proof when current automation succeeds | optional and replaceable |
 | `Presentation.expose` | proven solution set | user locals/goals | intended stable public interface |
 | `Narrowing.Backend` | LHS/source equation | raw solution set | yes; current Ax extension point |
 | `Materialization` | solution set plus rule/source | constrained post | intended axiom-neutral |
@@ -1448,20 +1585,22 @@ images = [
 ].
 ```
 
-It must then certify both:
+It must then support proofs of both:
 
 - **soundness:** every returned substitution is an actual Ax-unifier; and
-- **completeness/factorization:** every semantic witness represented by `h`
+- **completeness/factorization:** every solution of the original equation
   factors through at least one returned alternative.
 
-The current `ProvenSolutionSet` directly records the second property relative
-to `h`; an external-oracle integration should strengthen or supplement it to
-record the first property explicitly as well.
+The current generic layer constructs and automatically proves the first
+property. It constructs the second property as an explicit user-level goal.
+Afterward, `ExactSolutionSet` packages both, and `ProvenSolutionSet` is the
+specialization used to present one concrete `h`.
 
-An external oracle may compute candidates, but Lean should replay a
-certificate or otherwise construct the final `ProvenSolutionSet`. Once that
-object exists, `Presentation.expose` and the public proof scripts need no
-Ax-specific changes.
+An external oracle may compute candidates and perhaps emit a completeness
+certificate, but Lean must check the candidate soundness and elaborate or
+verify the completeness proof. The user can discharge that generated goal by
+an oracle-specific checker without changing `runWith`, `Presentation.expose`,
+or the subsequent result-branch scripts.
 
 For narrowing, the backend must additionally allow
 `Narrowing.Materialization` to substitute alternatives into RHS terms and
@@ -1495,15 +1634,18 @@ Used to propose results but not accepted as final proof merely by execution:
 Each path ends in proof construction:
 
 ```text
-free candidate       → factorization proof
-free failure         → False proof
-C alternatives       → disjunction-of-factorizations proof
+free/C candidate     → automatic universal soundness proof
+solution set         → explicit universal completeness goal
+completeness + h     → factorization disjunction for actual witnesses
+free failure         → completeness goal whose conclusion is False
 materialized post    → NarrowsTo equivalence proof
 subsumption tactic   → Subsumes proof
 ```
 
-If certification fails, the tactic reports an error instead of exposing an
-uncertified result.
+If automatic soundness checking fails, the tactic reports an error instead of
+exposing the candidate. If completeness is not proved, the overall Lean proof
+simply remains unfinished; result goals cannot yield a closed theorem while
+their certificate metavariable is unresolved.
 
 ### 7.3 Role of Lean-native unification
 
@@ -1513,7 +1655,10 @@ an intentional implementation shortcut, not a logical shortcut:
 - computation benefits from Lean's existing metavariable and occurs-check
   machinery;
 - residual metavariables are abstracted before leaving `Free.solve`; and
-- the result is reconstructed as an ordinary proposition proved from `h`.
+- candidate soundness is reconstructed as an ordinary universal proposition;
+  and
+- completeness is never inferred merely from successful execution of
+  `isDefEq`.
 
 ---
 
@@ -1537,7 +1682,7 @@ It deliberately reports an error rather than pretending to support:
 - dependent basis types;
 - native metavariables not traceable to original pattern arguments; or
 - failures whose contradiction cannot be replayed by the present
-  `simp_all`/`SizeOf`/`omega` procedure.
+  `unify_complete` procedure based on `simp_all`/`SizeOf`/`omega`.
 
 ### 8.2 C unification
 
@@ -1545,9 +1690,10 @@ The C backend is a proof of extensibility, not a general equational unifier.
 It currently requires:
 
 - binary operations satisfying the strong free-C `Operator.eq_iff` law;
-- a separate `C.Operator` instance for term recognition/certification;
+- a separate `C.Operator` instance for term recognition and proof replay;
 - finite recursive orientation enumeration; and
-- certificate replay by `simp_all [Operator.eq_iff]` and `grind`.
+- optional completeness automation by `simp_all [Operator.eq_iff]` and
+  `grind`.
 
 ### 8.3 Equational modules
 
@@ -1601,10 +1747,16 @@ h : pat1 ⋈ pat2
 │   ├── basisTypes = [Conf]
 │   └── images = [λu, f u c; λu, c; λu, u]
 │
+├── proveSoundness
+│   └── ∀u, f (f u c) c = f (f u c) c
+│
+├── completeness goal (proved by the user or `unify_complete`)
+│   └── ∀x1 x2 y1, lhs = rhs → ∃u, factorization equations
+│
 ├── exposeSemantics h
 │   └── equality = f x1 x2 = f (f y1 c) c
 │
-├── Free.certify
+├── specialize completeness to h's witnesses
 │   └── proof of ∃u1, x1 = f u1 c ∧ x2 = c ∧ y1 = u1 ∧ True
 │
 └── Presentation.expose
@@ -1647,7 +1799,8 @@ document and avoids beginning in low-level metaprogramming:
 3. `Unification.Certificate` as the central modular interface;
 4. `Unification.Tactic.runWith` as the outer workflow;
 5. `Unification.Problem` and `Tactic.exposeSemantics`;
-6. `Unification.Free.solve` and `Free.certify`;
+6. `Unification.Free.solve`, `Tactic.proveSoundness`, and
+   `Tactic.completenessType`;
 7. `Unification.Presentation.expose`;
 8. `framework.Axiom`, `Symbol`, `EqModule`, and
    `PresentationElaboration`;
@@ -1661,7 +1814,8 @@ The core architectural message is visible after steps 1–4:
 semantic proposition
     → backend-neutral problem
     → replaceable solver
-    → certified solution set
+    → automatically checked sound solution set
+    → user-certified exact solution set
     → stable user proof interface.
 ```
 
