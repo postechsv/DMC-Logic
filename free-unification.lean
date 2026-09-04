@@ -400,7 +400,25 @@ structure ProvenAlternative where
 structure SolutionSet where
   alternatives : Array Alternative
 
-/-- A complete, checked disjunction of all alternatives returned by a backend. -/
+/--
+A computed solution set whose alternatives have each been checked to be
+actual unifiers.  Soundness is backend-independent data even when the tactic
+used to construct the proofs is axiom-specific.
+-/
+structure SoundSolutionSet where
+  solutionSet : SolutionSet
+  soundnessPropositions : Array Expr
+  soundnessProofs : Array Expr
+
+/--
+A sound solution set together with a user-supplied proof that every unifier
+factors through one of its alternatives.
+-/
+structure ExactSolutionSet extends SoundSolutionSet where
+  completenessProposition : Expr
+  completenessProof : Expr
+
+/-- A checked factorization disjunction specialized to one semantic witness. -/
 structure ProvenSolutionSet where
   solutionSet : SolutionSet
   branchPropositions : Array Expr
@@ -495,11 +513,9 @@ end C
 
 namespace Free
 
-/-- Extra evidence used only while certifying a native free-unification result. -/
+/-- A free-backend candidate represented through the common alternative interface. -/
 structure Candidate where
   alternative : Certificate.Alternative
-  /-- For the free theory, every residual basis value is an original argument. -/
-  basisWitnesses : Array Nat
   deriving Inhabited
 
 structure Output where
@@ -548,16 +564,14 @@ def solve (problem : Problem.Input) : MetaM Output := do
         residuals := residuals.push residual
 
   let mut basisTypes := #[]
-  let mut basisWitnesses := #[]
   for residual in residuals do
-    let some originalIndex := symbolicArguments.findIdx? fun argument =>
+    let some _originalIndex := symbolicArguments.findIdx? fun argument =>
         argument.isMVar && argument.mvarId! == residual
       | throwError "native unification introduced an unexpected metavariable"
     let type ← instantiateMVars (← residual.getType)
     unless (← getMVars type).isEmpty do
       throwError "dependent basis types are outside the supported free fragment"
     basisTypes := basisTypes.push type
-    basisWitnesses := basisWitnesses.push originalIndex
 
   let images ← withBasisVariables basisTypes 0 #[] fun basis => do
     let mut images := #[]
@@ -570,34 +584,7 @@ def solve (problem : Problem.Input) : MetaM Output := do
 
   return { candidates := #[{
       alternative := { basisTypes, images }
-      basisWitnesses
     }] }
-
-/--
-Prove the factorization selected by `solve`.  The native assignment chooses
-the proposition, but `simp_all` must prove it from the constructor equality;
-therefore `isDefEq` is not trusted as a proof-producing oracle.
--/
-def certifySuccess
-    (solution : Candidate) (actualArguments : Array Expr)
-    (actualIdents : Array Ident) (irrelevant : Array FVarId := #[]) : TacticM
-      Certificate.ProvenAlternative := do
-  let goal ← getMainGoal
-  let proposition ← goal.withContext do
-    Certificate.factorizationType solution.alternative actualArguments
-  let proof ← goal.withContext do mkFreshExprMVar (some proposition)
-  let mut certificationGoal := proof.mvarId!
-  for hypothesis in irrelevant do
-    certificationGoal ← certificationGoal.clear hypothesis
-  replaceMainGoal [certificationGoal]
-  for witnessIndex in solution.basisWitnesses do
-    let witnessIdent := actualIdents[witnessIndex]!
-    evalTactic (← `(tactic| refine Exists.intro $witnessIdent ?_))
-  evalTactic (← `(tactic| simp_all))
-  unless ← proof.mvarId!.isAssigned do
-    throwError "failed to certify the native free-unification result"
-  setGoals [goal]
-  return { alternative := solution.alternative, proposition, proof }
 
 private partial def collectEqualityLeaves
     (proof : Expr) (result : Array Expr := #[]) : MetaM (Array Expr) := do
@@ -634,12 +621,13 @@ private def noteSizeEquation (goal : MVarId) (equality : Expr) : MetaM MVarId :=
     return goal
 
 /--
-Certify failure returned by the native free backend.  `simp_all` proves direct
-constructor clashes.  For occurs-check cycles, every constructor equation is
-also mapped through `sizeOf`; generated inductive `SizeOf` equations reduce to
-inconsistent natural-number constraints, which `omega` checks.
+Optional automation for a zero-result completeness goal. `simp_all` proves
+direct constructor clashes. For occurs-check cycles, every constructor
+equation is also mapped through `sizeOf`; generated inductive `SizeOf`
+equations reduce to inconsistent natural-number constraints checked by
+`omega`.
 -/
-private def certifyFailureGoal : TacticM Unit := do
+def certifyFailureGoal : TacticM Unit := do
   evalTactic (← `(tactic| simp_all))
   if (← getGoals).isEmpty then
     return
@@ -663,51 +651,6 @@ private def certifyFailureGoal : TacticM Unit := do
     throwError
       "free unification found no solution, but could not certify the contradiction"
 
-private def certifyFailure (irrelevant : Array FVarId) : TacticM Expr := do
-  let goal ← getMainGoal
-  let falseProof ← goal.withContext do
-    mkFreshExprMVar (some (Lean.mkConst ``False))
-  let mut certificationGoal := falseProof.mvarId!
-  for hypothesis in irrelevant do
-    certificationGoal ← certificationGoal.clear hypothesis
-  replaceMainGoal [certificationGoal]
-  certifyFailureGoal
-  unless ← falseProof.mvarId!.isAssigned do
-    throwError "failed to construct the free-unification refutation"
-  setGoals [goal]
-  return falseProof
-
-/--
-Turn the free backend's private evidence into the common, complete result
-certificate consumed by `Presentation`.
--/
-def certify
-    (output : Output) (actualArguments : Array Expr)
-    (actualIdents : Array Ident) (irrelevant : Array FVarId := #[]) :
-    TacticM Certificate.ProvenSolutionSet := do
-  let solutionSet : Certificate.SolutionSet := {
-    alternatives := output.candidates.map (·.alternative)
-  }
-  match output.candidates.size with
-  | 0 =>
-      let proof ← certifyFailure irrelevant
-      return {
-        solutionSet
-        branchPropositions := #[]
-        proposition := Lean.mkConst ``False
-        proof
-      }
-  | 1 =>
-      let proven ← certifySuccess output.candidates[0]!
-        actualArguments actualIdents irrelevant
-      return {
-        solutionSet
-        branchPropositions := #[proven.proposition]
-        proposition := proven.proposition
-        proof := proven.proof
-      }
-  | _ =>
-      throwError "the free backend unexpectedly returned more than one MGU"
 
 end Free
 
@@ -715,11 +658,11 @@ end Free
 namespace C
 
 /-!
-The C backend is deliberately an adapter around the free backend.  It expands
+The C backend is deliberately an adapter around the free backend. It expands
 the right-hand term into every orientation permitted by registered
 `C.Operator`s, invokes native free unification independently on each
-orientation, and returns the resulting finite complete set through the common
-`Certificate` interface.
+orientation, and returns the resulting finite candidate set through the
+common `Certificate` interface.
 -/
 
 abbrev Candidate := Free.Candidate
@@ -797,8 +740,8 @@ private def pushUniqueCandidate
     candidates.push candidate
 
 /--
-Compute a finite complete set of C-unifiers by reducing each C orientation to
-the already certified free solver.  `withoutModifyingState` is essential:
+Compute a finite candidate set of C-unifiers by reducing each C orientation to
+the free solver. `withoutModifyingState` is essential:
 native unification may assign the saturated metavariables, and every
 orientation must start from the same untouched problem.
 -/
@@ -814,40 +757,6 @@ def solve (problem : Problem.Input) : MetaM Output := do
     for candidate in output.candidates do
       candidates := pushUniqueCandidate candidates candidate
   return { candidates }
-
-/--
-Replay the complete C result against the semantic equality extracted from
-`Unifiable`.  The registered decomposition rules turn equality at each C node
-into the same direct-or-swapped cases enumerated by `solve`; ordinary
-constructors and existential basis witnesses are discharged by `simp_all`.
--/
-def certify
-    (output : Output) (actualArguments : Array Expr)
-    (_actualIdents : Array Ident) (irrelevant : Array FVarId := #[]) :
-    TacticM Certificate.ProvenSolutionSet := do
-  let solutionSet : Certificate.SolutionSet := {
-    alternatives := output.candidates.map (·.alternative)
-  }
-  let goal ← getMainGoal
-  let (branchPropositions, proposition) ← goal.withContext do
-    Certificate.solutionSetType solutionSet actualArguments
-  let proof ← goal.withContext do mkFreshExprMVar (some proposition)
-  let mut certificationGoal := proof.mvarId!
-  for hypothesis in irrelevant do
-    certificationGoal ← certificationGoal.clear hypothesis
-  replaceMainGoal [certificationGoal]
-  try
-    evalTactic (← `(tactic| simp_all [Operator.eq_iff] <;> grind))
-  catch exception =>
-    throwError m!"failed to certify the C-unification result:\n{exception.toMessageData}"
-  unless ← proof.mvarId!.isAssigned do
-    throwError "failed to construct the C-unification certificate"
-  let proof ← instantiateMVars proof
-  let remainingMVars ← getMVars proof
-  unless remainingMVars.isEmpty do
-    throwError "the C-unification proof contains an unabstracted metavariable"
-  setGoals [goal]
-  return { solutionSet, branchPropositions, proposition, proof }
 
 end C
 
@@ -973,7 +882,6 @@ namespace Tactic
 
 private structure SemanticWitnesses where
   actualArguments : Array Expr
-  actualIdents : Array Ident
   stateId : FVarId
   lhsSemanticsId : FVarId
   rhsSemanticsId : FVarId
@@ -989,6 +897,109 @@ private def instantiateSaturatedApplication
         | some index => arguments[index]?
         | none => none
     | _ => none
+
+private def instantiateOriginalArguments
+    (expression : Expr) (originals replacements : Array Expr) : Expr :=
+  expression.replace fun subterm =>
+    match subterm with
+    | .mvar id =>
+        match originals.findIdx? fun original =>
+            original.isMVar && original.mvarId! == id with
+        | some index => replacements[index]?
+        | none => none
+    | _ => none
+
+private partial def withOriginalArguments
+    {α : Type}
+    (problem : Problem.Input) (index : Nat) (arguments : Array Expr)
+    (continuation : Array Expr → MetaM α) : MetaM α := do
+  let originals := Problem.symbolicArguments problem
+  if _h : index < originals.size then
+    let original := originals[index]!
+    let type ← inferType original
+    let type := instantiateOriginalArguments type originals arguments
+    let names := problem.lhs.argumentNames ++ problem.rhs.argumentNames
+    let name := Problem.visibleName s!"x{index + 1}" names[index]!
+    withLocalDeclD name type fun argument =>
+      withOriginalArguments problem (index + 1) (arguments.push argument)
+        continuation
+  else
+    continuation arguments
+
+private partial def withBasisArguments
+    {α : Type}
+    (types : Array Expr) (index : Nat) (arguments : Array Expr)
+    (continuation : Array Expr → MetaM α) : MetaM α := do
+  if _h : index < types.size then
+    withLocalDeclD (Name.mkSimple s!"u{index + 1}") types[index]!
+      fun argument =>
+        withBasisArguments types (index + 1) (arguments.push argument)
+          continuation
+  else
+    continuation arguments
+
+private def equationType
+    (problem : Problem.Input) (arguments : Array Expr) : MetaM Expr := do
+  unless arguments.size == Problem.argumentCount problem do
+    throwError "a unification certificate has the wrong number of arguments"
+  let lhsArguments := arguments.extract 0 problem.lhs.arguments.size
+  let rhsArguments := arguments.extract problem.lhs.arguments.size arguments.size
+  let lhs ← C.exposeHead
+    (instantiateSaturatedApplication problem.lhs lhsArguments)
+  let rhs ← C.exposeHead
+    (instantiateSaturatedApplication problem.rhs rhsArguments)
+  mkEq lhs rhs
+
+/-- State that every actual unifier factors through a returned alternative. -/
+private def completenessType
+    (problem : Problem.Input) (solutionSet : Certificate.SolutionSet) : MetaM Expr :=
+  withOriginalArguments problem 0 #[] fun arguments => do
+    let equation ← equationType problem arguments
+    let (_, factorization) ←
+      Certificate.solutionSetType solutionSet arguments
+    let body ← mkArrow equation factorization
+    mkForallFVars arguments body
+
+/-- State that every basis instance of one returned alternative is a unifier. -/
+private def soundnessType
+    (problem : Problem.Input) (alternative : Certificate.Alternative) : MetaM Expr :=
+  withBasisArguments alternative.basisTypes 0 #[] fun basis => do
+    let mut images := #[]
+    for image in alternative.images do
+      images := images.push (← whnf
+        (Certificate.instantiateImage image basis))
+    let equation ← equationType problem images
+    mkForallFVars basis equation
+
+private def proveSoundness
+    (ref : Syntax) (problem : Problem.Input)
+    (solutionSet : Certificate.SolutionSet) (hypothesisId : FVarId) : TacticM
+      Certificate.SoundSolutionSet := do
+  let originalGoal ← getMainGoal
+  let mut propositions := #[]
+  let mut proofs := #[]
+  for alternative in solutionSet.alternatives do
+    let proposition ← originalGoal.withContext do
+      soundnessType problem alternative
+    let proof ← originalGoal.withContext do
+      mkFreshExprMVar (some proposition)
+    let soundnessGoal ← proof.mvarId!.clear hypothesisId
+    replaceMainGoal [soundnessGoal]
+    try
+      evalTactic (← `(tactic|
+        intros <;> simp_all [C.Operator.eq_iff] <;> grind))
+    catch exception =>
+      throwErrorAt ref m!"failed to certify a computed unifier's soundness:\n{exception.toMessageData}"
+    unless ← proof.mvarId!.isAssigned do
+      throwErrorAt ref "failed to construct a unifier soundness proof"
+    propositions := propositions.push proposition
+    proofs := proofs.push (← instantiateMVars proof)
+    setGoals [originalGoal]
+  return {
+    solutionSet
+    soundnessPropositions := propositions
+    soundnessProofs := proofs
+  }
 
 private def exposeSemantics
     (ref : Syntax) (h : Ident) (problem : Problem.Input) : TacticM
@@ -1049,7 +1060,6 @@ private def exposeSemantics
 
   return {
     actualArguments
-    actualIdents
     stateId := ← getFVarId stateIdent
     lhsSemanticsId
     rhsSemanticsId
@@ -1067,14 +1077,13 @@ private def clearSemantics (witnesses : SemanticWitnesses) : TacticM Unit := do
   setGoals clearedGoals.toList
 
 /--
-Shared frontend/backend boundary.  A backend supplies only `solve` and
-`certify`; extraction of the `Unifiable` semantics and presentation of basis
-variables and equations are theory-independent.
+Shared frontend/backend boundary.  A backend computes alternatives; their
+soundness is checked immediately, while completeness becomes an explicit
+user-level proof goal.  Result goals depend on that completeness certificate.
 -/
 private def runWith {Output : Type}
     (solve : Problem.Input → MetaM Output)
-    (certify : Output → Array Expr → Array Ident → Array FVarId →
-      TacticM Certificate.ProvenSolutionSet)
+    (solutions : Output → Certificate.SolutionSet)
     (ref : Syntax) (h : Ident) : TacticM Unit := do
   let hypothesisId ← getFVarId h
   let hypothesisType ← instantiateMVars (← hypothesisId.getType)
@@ -1084,27 +1093,63 @@ private def runWith {Output : Type}
     let output ← solve problem
     return (problem, output)
 
+  let sound ← proveSoundness ref problem (solutions output) hypothesisId
+  let completenessProposition ← initialGoal.withContext do
+    completenessType problem sound.solutionSet
+  let completenessName ← initialGoal.withContext do
+    return (← getLCtx).getUnusedName `completeness
+  let completenessValue ← initialGoal.withContext do
+    mkFreshExprMVar (some completenessProposition)
+  let completenessGoal ← completenessValue.mvarId!.clear hypothesisId
+  completenessGoal.setTag `completeness
+  let continuationGoal ← initialGoal.withContext do
+    initialGoal.assert completenessName completenessProposition completenessValue
+  let (completenessId, continuationGoal) ← continuationGoal.withContext do
+    continuationGoal.intro1P
+  let completenessProof := mkFVar completenessId
+
+  setGoals [continuationGoal]
   let witnesses ← exposeSemantics ref h problem
-  let proven ← try
-      certify output witnesses.actualArguments witnesses.actualIdents
-        #[witnesses.lhsSemanticsId, witnesses.rhsSemanticsId, witnesses.stateId]
-    catch exception =>
-      throwErrorAt h exception.toMessageData
+  let goal ← getMainGoal
+  let (branchPropositions, proposition, proof) ← goal.withContext do
+    let (branchPropositions, proposition) ←
+      Certificate.solutionSetType sound.solutionSet witnesses.actualArguments
+    let specialized := mkAppN completenessProof witnesses.actualArguments
+    let proof := mkApp specialized (mkFVar witnesses.equalityId)
+    let proofType ← inferType proof
+    unless ← isDefEq proofType proposition do
+      throwError "the completeness certificate does not match the computed solution set"
+    return (branchPropositions, proposition, proof)
+  let exact : Certificate.ExactSolutionSet := {
+    sound with
+    completenessProposition
+    completenessProof
+  }
+  let proven : Certificate.ProvenSolutionSet := {
+    solutionSet := exact.solutionSet
+    branchPropositions
+    proposition
+    proof
+  }
   Presentation.expose proven
   clearSemantics witnesses
+  let resultGoals ← getGoals
+  setGoals (completenessGoal :: resultGoals)
 
-/-- Run the native free-unification backend and expose its certified MGU. -/
+/-- Compute a free solution set and expose completeness plus result goals. -/
 def run (ref : Syntax) (h : Ident) : TacticM Unit :=
   runWith Free.solve
-    (fun output arguments idents irrelevant =>
-      Free.certify output arguments idents irrelevant)
+    (fun output => {
+      alternatives := output.candidates.map (·.alternative)
+    })
     ref h
 
-/-- Run the C-unification backend and expose its certified complete MGU set. -/
+/-- Compute a C solution set and expose completeness plus result goals. -/
 def runC (ref : Syntax) (h : Ident) : TacticM Unit :=
   runWith C.solve
-    (fun output arguments idents irrelevant =>
-      C.certify output arguments idents irrelevant)
+    (fun output => {
+      alternatives := output.candidates.map (·.alternative)
+    })
     ref h
 
 /--
@@ -1136,20 +1181,44 @@ def runIn (ref : Syntax) (h : Ident) (presentationSyntax : TSyntax `term) :
 
 end Tactic
 
+
+namespace Completeness
+
+/--
+Optional user-level automation for the completeness goal emitted by `unify`.
+The goal remains an ordinary proposition: users may replace this tactic with
+any manual, module-specific, or externally checked proof.
+-/
+def run : TacticM Unit := do
+  evalTactic (← `(tactic| intros))
+  try
+    evalTactic (← `(tactic|
+      solve | (simp_all <;> grind)))
+  catch _ => pure ()
+  if (← getGoals).isEmpty then
+    return
+  try
+    evalTactic (← `(tactic|
+      solve | (simp_all [C.Operator.eq_iff] <;> grind)))
+  catch _ => pure ()
+  if (← getGoals).isEmpty then
+    return
+  Free.certifyFailureGoal
+
+end Completeness
+
 end Unification
 
 /--
-Compute and certify the MGU of the free first-order unification problem in `h`.
-On success it introduces basis variables `u1`, `u2`, ... and one equation per
-original pattern argument.  On failure it closes the goal by contradiction.
+Compute the free first-order solution set for `h`, check candidate soundness,
+and expose completeness followed by one result goal per candidate.
 -/
 elab "unify " h:ident : tactic =>
   Unification.Tactic.run h.raw h
 
 /--
-Compute and certify all MGUs modulo registered free commutative operations.
-The exposed basis-variable/equation interface is identical to `unify`; more
-than one MGU creates more than one proof goal.
+Compute all candidates modulo registered free commutative operations, check
+their soundness, and expose completeness followed by the result goals.
 -/
 elab "c_unify " h:ident : tactic =>
   Unification.Tactic.runC h.raw h
@@ -1158,13 +1227,17 @@ elab "c_unify " h:ident : tactic =>
 elab "unify " h:ident " in " presentation:term : tactic =>
   Unification.Tactic.runIn h.raw h presentation
 
+/-- Attempt to discharge the explicit completeness goal emitted by `unify`. -/
+elab "unify_complete" : tactic =>
+  Unification.Completeness.run
+
 
 namespace Narrowing
 
 /-!
 `Narrowing` is an adapter around the generic unification API.  It extracts the
 structural equation between a rule LHS and a source-pattern term, delegates
-that equation to a backend, and reconnects the certified substitutions to the
+that equation to a backend, and reconnects the candidate substitutions to the
 rule RHS and both constraints.
 -/
 
@@ -1527,30 +1600,36 @@ No more unifiers.
 -- pat1 ⋈ pat2 means pat1 & pat2 are unifiable
 example (h : pat1 ⋈ pat2) : True := by
   unify h
-  guard_hyp u1 : Conf
-  guard_hyp h1 : x1 = f u1 c
-  guard_hyp h2 : x2 = c
-  guard_hyp h3 : y1 = u1
-  exact True.intro
+  -- Completeness is an ordinary user-level goal.  It can be proved directly;
+  -- `unify_complete` is merely optional automation for proofs like this one.
+  · intros <;> simp_all
+  · guard_hyp u1 : Conf
+    guard_hyp h1 : x1 = f u1 c
+    guard_hyp h2 : x2 = c
+    guard_hyp h3 : y1 = u1
+    exact True.intro
 
 -- The explicit-presentation form has the same public result interface.
 example (h : pat1 ⋈[FreePresentation] pat2) : True := by
   unify h in FreePresentation
-  guard_hyp u1 : Conf
-  guard_hyp h1 : x1 = f u1 c
-  guard_hyp h2 : x2 = c
-  guard_hyp h3 : y1 = u1
-  exact True.intro
+  · unify_complete
+  · guard_hyp u1 : Conf
+    guard_hyp h1 : x1 = f u1 c
+    guard_hyp h2 : x2 = c
+    guard_hyp h3 : y1 = u1
+    exact True.intro
 
 
 -- non-unifiable example
 example (h : (fun x : Conf => f x x) ⋈ c) : False := by
   unify h
+  unify_complete
 
 -- Failure produces a proof of `False`, so it closes an arbitrary target rather
 -- than relying on the target itself being syntactically `False`.
 example (h : (c : Conf) ⋈ f c c) : (0 : Nat) = 1 := by
   unify h
+  unify_complete
 
 
 -- A differently named problem with two independent basis variables.  This is
@@ -1567,33 +1646,36 @@ def pairRight (y1 y2 : Conf) : Conf := f (f y1 y2) (f y2 y1)
 
 example (h : pairLeft ⋈ pairRight) : True := by
   unify h
-  guard_hyp u1 : Conf
-  guard_hyp u2 : Conf
-  guard_hyp h1 : x1 = f u1 u2
-  guard_hyp h2 : x2 = f u2 u1
-  guard_hyp h3 : y1 = u1
-  guard_hyp h4 : y2 = u2
-  exact True.intro
+  · unify_complete
+  · guard_hyp u1 : Conf
+    guard_hyp u2 : Conf
+    guard_hyp h1 : x1 = f u1 u2
+    guard_hyp h2 : x2 = f u2 u1
+    guard_hyp h3 : y1 = u1
+    guard_hyp h4 : y2 = u2
+    exact True.intro
 
 
 -- Lambda closures work directly; named declarations are not required.
 example
     (h : (fun a b : Conf => f a b) ⋈ (fun m : Conf => f m c)) : True := by
   unify h
-  guard_hyp u1 : Conf
-  guard_hyp h1 : a = u1
-  guard_hyp h2 : b = c
-  guard_hyp h3 : m = u1
-  exact True.intro
+  · unify_complete
+  · guard_hyp u1 : Conf
+    guard_hyp h1 : a = u1
+    guard_hyp h2 : b = c
+    guard_hyp h3 : m = u1
+    exact True.intro
 
 
 -- Pure variables still produce a basis rather than an object-language `var`.
 example (h : (fun left : Conf => left) ⋈ (fun right : Conf => right)) : True := by
   unify h
-  guard_hyp u1 : Conf
-  guard_hyp h1 : left = u1
-  guard_hyp h2 : right = u1
-  exact True.intro
+  · unify_complete
+  · guard_hyp u1 : Conf
+    guard_hyp h1 : left = u1
+    guard_hyp h2 : right = u1
+    exact True.intro
 
 
 -- A deeper cascading substitution exercises native unification and certificate
@@ -1602,18 +1684,20 @@ example
     (h : (fun a b d : Conf => f a (f b d)) ⋈
       (fun x : Conf => f (f x c) (f c x))) : True := by
   unify h
-  guard_hyp u1 : Conf
-  guard_hyp h1 : a = f u1 c
-  guard_hyp h2 : b = c
-  guard_hyp h3 : d = u1
-  guard_hyp h4 : x = u1
-  exact True.intro
+  · unify_complete
+  · guard_hyp u1 : Conf
+    guard_hyp h1 : a = f u1 c
+    guard_hyp h2 : b = c
+    guard_hyp h3 : d = u1
+    guard_hyp h4 : x = u1
+    exact True.intro
 
 
 -- A ground unification example
 example (h : (f c c : Conf) ⋈ f c c) : True := by
   unify h
-  exact True.intro
+  · unify_complete
+  · exact True.intro
 
 
 -- An occurs-check failure: the constructor equations would imply
@@ -1622,6 +1706,7 @@ example
     (h : (fun x : Conf => f x x) ⋈
       (fun y : Conf => f (f y c) y)) : False := by
   unify h
+  unify_complete
 
 
 end examples
@@ -1670,16 +1755,17 @@ example
       (fun payload next : Nat => (advance payload next).lhs) ⋈
       (fun n : Nat => (source n).term)) : True := by
   unify h
-  guard_hyp u1 : Nat
-  guard_hyp u2 : Nat
-  guard_hyp h1 : payload = u1
-  guard_hyp h2 : next = u2
-  guard_hyp h3 : n = u1
-  -- Substitution in `advance.rhs` gives
-  -- `pair (atom u1) (atom u2)`.  Substitution in the source and rule
-  -- constraints gives `0 < u1 ∧ u2 = u1 + 1`, exactly the body of `post`
-  -- generated by the following narrowing example.
-  exact True.intro
+  · unify_complete
+  · guard_hyp u1 : Nat
+    guard_hyp u2 : Nat
+    guard_hyp h1 : payload = u1
+    guard_hyp h2 : next = u2
+    guard_hyp h3 : n = u1
+    -- Substitution in `advance.rhs` gives
+    -- `pair (atom u1) (atom u2)`.  Substitution in the source and rule
+    -- constraints gives `0 < u1 ∧ u2 = u1 + 1`, exactly the body of `post`
+    -- generated by the following narrowing example.
+    exact True.intro
 
 example : advance ⊢ source ↪ target := by
   apply mapsInto_via_narrowing
@@ -1779,11 +1865,15 @@ example (a b : Conf) : f a b = f b a := by
 noncomputable def pairLeft (x y : Conf) : Conf := f x y
 noncomputable def pairRight (a b : Conf) : Conf := f a b
 
+#print pairLeft
+#print pairRight
+
 -- There are two MGUs: the direct pairing and the swapped pairing.  Each is
 -- exposed through exactly the same basis-variable/equation interface as the
 -- free `unify` tactic, so this proof receives two goals.
 example (h : pairLeft ⋈[Module1] pairRight) : True := by
   unify h in Module1
+  · unify_complete
   · guard_hyp u1 : Conf
     guard_hyp u2 : Conf
     guard_hyp h1 : x = u1
@@ -1803,6 +1893,7 @@ example (h : pairLeft ⋈[Module1] pairRight) : True := by
 -- presentation.  Registration does not partition symbols by arity.
 example (h : pairLeft ⋈[MixedA] pairRight) : True := by
   unify h in MixedA
+  · unify_complete
   all_goals exact True.intro
 
 -- Registration is recursive: independently swapping the outer and inner
@@ -1812,6 +1903,7 @@ example
       (fun x y z : Conf => f (f x y) z) ⋈[Module1]
       (fun a b c : Conf => f c (f a b))) : True := by
   unify h in Module1
+  · unify_complete
   all_goals exact True.intro
 
 -- Free constants can rule out every direct/swapped branch.  The hypothesis is
@@ -1826,6 +1918,7 @@ def blue : Conf := atom 1
 
 example (h : (f red red : Conf) ⋈[Module1] f red blue) : False := by
   unify h in Module1
+  unify_complete
 
 end c_unification_examples
 
