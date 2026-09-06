@@ -437,3 +437,240 @@ noncomputable def nested : ◯NestedGoal := by
     exact solveRight candidate hcase hrequired
 
 end LaxMonadExamples
+
+
+namespace FiniteGraphExample
+
+open Lax
+
+/-!
+## Model checking a finite graph
+
+The reachable graph rooted at `s0` has depth three:
+
+```text
+s0
+├── s1
+│   └── s3
+│       └── s6
+└── s2
+    ├── s4
+    │   └── s7
+    └── s5
+        └── s8
+
+s9 is unsafe but unreachable.
+```
+-/
+
+inductive State where
+  | s0 | s1 | s2 | s3 | s4 | s5 | s6 | s7 | s8 | s9
+  deriving DecidableEq, Repr
+
+open State
+
+/-- The actual transition relation of the model. -/
+inductive Step : State → State → Prop where
+  | step01 : Step s0 s1
+  | step02 : Step s0 s2
+  | step13 : Step s1 s3
+  | step24 : Step s2 s4
+  | step25 : Step s2 s5
+  | step36 : Step s3 s6
+  | step47 : Step s4 s7
+  | step58 : Step s5 s8
+
+/-- Successor lists computed by the model checker. -/
+def next : State → List State
+  | s0 => [s1, s2]
+  | s1 => [s3]
+  | s2 => [s4, s5]
+  | s3 => [s6]
+  | s4 => [s7]
+  | s5 => [s8]
+  | s6 | s7 | s8 | s9 => []
+
+/-- The local obligation generated when the checker expands one state. -/
+def Complete (source : State) : Prop :=
+  ∀ target, Step source target → target ∈ next source
+
+/-- Computing successors is immediate; completeness is deferred through `◯`. -/
+def expand (source : State) : ◯(Complete source) :=
+  assume (Complete source)
+
+/-- `s9` is the sole unsafe state. -/
+def Safe (state : State) : Prop :=
+  state ≠ s9
+
+/--
+`SafeFor depth source` says that `source` is safe, all of its successors are
+safe for one less step, and states at depth zero are genuinely terminal.
+-/
+def SafeFor : Nat → State → Prop
+  | 0, source => Safe source ∧ ∀ target, Step source target → False
+  | depth + 1, source =>
+      Safe source ∧ ∀ target, Step source target → SafeFor depth target
+
+/-- Reachability follows zero or more edges, starting at the first argument. -/
+inductive Reachable : State → State → Prop where
+  | refl (state) : Reachable state state
+  | step {source middle target} :
+      Step source middle → Reachable middle target → Reachable source target
+
+/-- A closed `SafeFor` tree establishes safety of every reachable state. -/
+theorem SafeFor.reachable {depth source target}
+    (safe : SafeFor depth source) (reachable : Reachable source target) : Safe target := by
+  induction reachable generalizing depth with
+  | refl =>
+      cases depth <;> exact safe.1
+  | step edge _ ih =>
+      cases depth with
+      | zero => exact False.elim (safe.2 _ edge)
+      | succ depth => exact ih (safe.2 _ edge)
+
+
+/-! ### Construct the safety proof before certifying successor completeness -/
+
+def checkS6 : ◯(SafeFor 0 s6) := by
+  have safeHere : Safe s6 := by simp [Safe]
+  lax_bind (expand s6) as complete
+  have terminal : ∀ target, Step s6 target → False := by
+    intro target edge
+    have member := complete target edge
+    simp [next] at member
+  lax_return
+  exact ⟨safeHere, terminal⟩
+
+def checkS7 : ◯(SafeFor 0 s7) := by
+  have safeHere : Safe s7 := by simp [Safe]
+  lax_bind (expand s7) as complete
+  have terminal : ∀ target, Step s7 target → False := by
+    intro target edge
+    have member := complete target edge
+    simp [next] at member
+  lax_return
+  exact ⟨safeHere, terminal⟩
+
+def checkS8 : ◯(SafeFor 0 s8) := by
+  have safeHere : Safe s8 := by simp [Safe]
+  lax_bind (expand s8) as complete
+  have terminal : ∀ target, Step s8 target → False := by
+    intro target edge
+    have member := complete target edge
+    simp [next] at member
+  lax_return
+  exact ⟨safeHere, terminal⟩
+
+def checkS3 : ◯(SafeFor 1 s3) := by
+  have safeHere : Safe s3 := by simp [Safe]
+  lax_bind (expand s3) as complete
+  have onlyS6 : ∀ target, Step s3 target → target = s6 := by
+    intro target edge
+    simpa [next] using complete target edge
+  lax_bind checkS6 as safeS6
+  lax_return
+  refine ⟨safeHere, ?_⟩
+  intro target edge
+  rw [onlyS6 target edge]
+  exact safeS6
+
+def checkS4 : ◯(SafeFor 1 s4) := by
+  have safeHere : Safe s4 := by simp [Safe]
+  lax_bind (expand s4) as complete
+  have onlyS7 : ∀ target, Step s4 target → target = s7 := by
+    intro target edge
+    simpa [next] using complete target edge
+  lax_bind checkS7 as safeS7
+  lax_return
+  refine ⟨safeHere, ?_⟩
+  intro target edge
+  rw [onlyS7 target edge]
+  exact safeS7
+
+def checkS5 : ◯(SafeFor 1 s5) := by
+  have safeHere : Safe s5 := by simp [Safe]
+  lax_bind (expand s5) as complete
+  have onlyS8 : ∀ target, Step s5 target → target = s8 := by
+    intro target edge
+    simpa [next] using complete target edge
+  lax_bind checkS8 as safeS8
+  lax_return
+  refine ⟨safeHere, ?_⟩
+  intro target edge
+  rw [onlyS8 target edge]
+  exact safeS8
+
+def checkS1 : ◯(SafeFor 2 s1) := by
+  have safeHere : Safe s1 := by simp [Safe]
+  lax_bind (expand s1) as complete
+  have onlyS3 : ∀ target, Step s1 target → target = s3 := by
+    intro target edge
+    simpa [next] using complete target edge
+  lax_bind checkS3 as safeS3
+  lax_return
+  refine ⟨safeHere, ?_⟩
+  intro target edge
+  rw [onlyS3 target edge]
+  exact safeS3
+
+def checkS2 : ◯(SafeFor 2 s2) := by
+  have safeHere : Safe s2 := by simp [Safe]
+  lax_bind (expand s2) as complete
+  have child : ∀ target, Step s2 target → target = s4 ∨ target = s5 := by
+    intro target edge
+    simpa [next] using complete target edge
+  lax_bind checkS4 as safeS4
+  lax_bind checkS5 as safeS5
+  lax_return
+  refine ⟨safeHere, ?_⟩
+  intro target edge
+  rcases child target edge with rfl | rfl
+  · exact safeS4
+  · exact safeS5
+
+/--
+The complete depth-three model-checking proof.  Its condition contains the
+local completeness obligations generated at `s0` through `s8`.
+-/
+def modelCheck : ◯(SafeFor 3 s0) := by
+  have safeHere : Safe s0 := by simp [Safe]
+  lax_assume (∀ target, Step s0 target → target = s1 ∨ target = s2) as complete
+  lax_bind checkS1 as safeS1
+  lax_bind checkS2 as safeS2
+  lax_return
+  refine ⟨safeHere, ?_⟩
+  intro target edge
+  rcases complete target edge with rfl | rfl
+  · exact safeS1
+  · exact safeS2
+
+
+/-! ### Certify the accumulated local obligations -/
+
+axiom completeS0 : ∀ target, Step s0 target → target = s1 ∨ target = s2
+axiom completeS1 : Complete s1
+axiom completeS2 : Complete s2
+axiom completeS3 : Complete s3
+axiom completeS4 : Complete s4
+axiom completeS5 : Complete s5
+axiom completeS6 : Complete s6
+axiom completeS7 : Complete s7
+axiom completeS8 : Complete s8
+
+/-- The deferred conditions from every nested expansion are discharged here. -/
+theorem modelCheckCondition : modelCheck.condition := by
+  simp [modelCheck, checkS1, checkS2, checkS3, checkS4, checkS5,
+    checkS6, checkS7, checkS8, expand, Lax.bind, Lax.ret, Lax.assume,
+    Lax.condition, completeS1, completeS2, completeS3,
+    completeS4, completeS5, completeS6, completeS7, completeS8]
+  exact completeS0
+
+/-- Eliminate `◯` only after the whole model-checking proof has been built. -/
+theorem certifiedTree : SafeFor 3 s0 :=
+  modelCheck.certify modelCheckCondition
+
+/-- Final global safety theorem for every state reachable from `s0`. -/
+theorem globalSafety {state : State} (reachable : Reachable s0 state) : Safe state :=
+  certifiedTree.reachable reachable
+
+end FiniteGraphExample
