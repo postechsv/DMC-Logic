@@ -1,4 +1,5 @@
 import Mathlib.Logic.Basic
+import Lean.Elab.Tactic
 
 /-!
 # A lax modality for speculative proofs
@@ -88,6 +89,9 @@ macro_rules
 
 
 
+
+
+
 namespace UnifExample
 
 open Lax
@@ -152,6 +156,47 @@ axiom easy_proof3 : MGU3 → GOAL
 
 axiom completeness_pf : T1_EQ_T2 → MGU1 ∨ MGU2 ∨ MGU3
 
+open Lean Elab Tactic Meta
+
+/--
+Stand-in for the dynamic unification generator.  A real implementation would
+compute the alternatives instead of referring to the three example MGUs.
+-/
+private def generate_unification_obligation (problem : Expr) : MetaM Expr := do
+  let alternatives := mkApp2 (mkConst ``Or) (mkConst ``MGU1)
+    (mkApp2 (mkConst ``Or) (mkConst ``MGU2) (mkConst ``MGU3))
+  return mkForall Name.anonymous BinderInfo.default problem alternatives
+
+/--
+Generate a unification obligation, insert it into the current lax proof via
+`mono`, and expose it as a normal local hypothesis.
+-/
+syntax "lax_unify " term " as " ident : tactic
+
+elab_rules : tactic
+  | `(tactic| lax_unify $problemStx:term as $h:ident) => do
+      let problem ← elabTermEnsuringType problemStx (mkSort .zero)
+      let obligation ← generate_unification_obligation problem
+      let obligationStx ← Term.exprToSyntax obligation
+      evalTactic (← `(tactic|
+        refine Lax.mono (α := $obligationStx) ?_ (Lax.assume $obligationStx) <;>
+          intro $h:ident))
+
+
+-- The generated completeness type is absent from both the signature and proof source.
+def lax_main_dynamic : ◯(T1_EQ_T2 → GOAL) := by
+  lax_unify T1_EQ_T2 as cert_hole
+  intro hEq
+  rcases cert_hole hEq with h1 | h2 | h3
+  · exact easy_proof1 h1
+  · exact easy_proof2 h2
+  · exact easy_proof3 h3
+
+set_option pp.proofs true in
+#reduce UnifExample.lax_main_dynamic
+-- TODO: reduce _proof1_ & _proof2_
+
+
 -- MGU's appear explicitly only for illustrative purpose
 def unif_tactic (T1_EQ_T2 : Prop) : ◯(T1_EQ_T2 → MGU1 ∨ MGU2 ∨ MGU3)
   := assume (T1_EQ_T2 → MGU1 ∨ MGU2 ∨ MGU3) -- generated dynamically
@@ -177,6 +222,9 @@ def lax_main' : ◯(T1_EQ_T2 → GOAL) := lax do
     · exact easy_proof1 h1
     · exact easy_proof2 h2
     · exact easy_proof3 h3
+
+
+
 
 
 /- STEP 2 : fill in the certification hole -/
