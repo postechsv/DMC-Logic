@@ -519,49 +519,105 @@ edges at one state are complete.
 -/
 def modelCheck : ◯(∀ target, Reachable s0 target → isSafe target) := by
   lax_assume (∀ target, Step s0 target → target = s1 ∨ target = s2) as completeS0
-  lax_assume (∀ target, Step s1 target → target = s3) as completeS1
-  lax_assume (∀ target, Step s3 target → target = s6) as completeS3
-  lax_assume (∀ target, Step s6 target → False) as completeS6
-  lax_assume (∀ target, Step s2 target → target = s4 ∨ target = s5) as completeS2
-  lax_assume (∀ target, Step s4 target → target = s7) as completeS4
-  lax_assume (∀ target, Step s7 target → False) as completeS7
-  lax_assume (∀ target, Step s5 target → target = s8) as completeS5
-  lax_assume (∀ target, Step s8 target → False) as completeS8
+
+  let checkS1 : ◯(∀ target, Reachable s1 target → isSafe target) := by
+    lax_assume (∀ target, Step s1 target → target = s3) as completeS1
+
+    let checkS3 : ◯(∀ target, Reachable s3 target → isSafe target) := by
+      lax_assume (∀ target, Step s3 target → target = s6) as completeS3
+
+      let checkS6 : ◯(∀ target, Reachable s6 target → isSafe target) := by
+        lax_assume (∀ target, Step s6 target → False) as completeS6
+        lax_return
+        intro target reachable
+        cases reachable with
+        | refl => exact safeS6
+        | step edge _ => exact False.elim (completeS6 _ edge)
+
+      lax_bind checkS6 as safeFromS6
+      lax_return
+      intro target reachable
+      cases reachable with
+      | refl => exact safeS3
+      | step edge reachable =>
+          rw [completeS3 _ edge] at reachable
+          exact safeFromS6 _ reachable
+
+    lax_bind checkS3 as safeFromS3
+    lax_return
+    intro target reachable
+    cases reachable with
+    | refl => exact safeS1
+    | step edge reachable =>
+        rw [completeS1 _ edge] at reachable
+        exact safeFromS3 _ reachable
+
+  lax_bind checkS1 as safeFromS1
+
+  let checkS2 : ◯(∀ target, Reachable s2 target → isSafe target) := by
+    lax_assume (∀ target, Step s2 target → target = s4 ∨ target = s5) as completeS2
+
+    let checkS4 : ◯(∀ target, Reachable s4 target → isSafe target) := by
+      lax_assume (∀ target, Step s4 target → target = s7) as completeS4
+
+      let checkS7 : ◯(∀ target, Reachable s7 target → isSafe target) := by
+        lax_assume (∀ target, Step s7 target → False) as completeS7
+        lax_return
+        intro target reachable
+        cases reachable with
+        | refl => exact safeS7
+        | step edge _ => exact False.elim (completeS7 _ edge)
+
+      lax_bind checkS7 as safeFromS7
+      lax_return
+      intro target reachable
+      cases reachable with
+      | refl => exact safeS4
+      | step edge reachable =>
+          rw [completeS4 _ edge] at reachable
+          exact safeFromS7 _ reachable
+
+    lax_bind checkS4 as safeFromS4
+
+    let checkS5 : ◯(∀ target, Reachable s5 target → isSafe target) := by
+      lax_assume (∀ target, Step s5 target → target = s8) as completeS5
+
+      let checkS8 : ◯(∀ target, Reachable s8 target → isSafe target) := by
+        lax_assume (∀ target, Step s8 target → False) as completeS8
+        lax_return
+        intro target reachable
+        cases reachable with
+        | refl => exact safeS8
+        | step edge _ => exact False.elim (completeS8 _ edge)
+
+      lax_bind checkS8 as safeFromS8
+      lax_return
+      intro target reachable
+      cases reachable with
+      | refl => exact safeS5
+      | step edge reachable =>
+          rw [completeS5 _ edge] at reachable
+          exact safeFromS8 _ reachable
+
+    lax_bind checkS5 as safeFromS5
+    lax_return
+    intro target reachable
+    cases reachable with
+    | refl => exact safeS2
+    | step edge reachable =>
+        rcases completeS2 _ edge with rfl | rfl
+        · exact safeFromS4 _ reachable
+        · exact safeFromS5 _ reachable
+
+  lax_bind checkS2 as safeFromS2
   lax_return
   intro target reachable
   cases reachable with
   | refl => exact safeS0
   | step edge reachable =>
       rcases completeS0 _ edge with rfl | rfl
-      · cases reachable with
-        | refl => exact safeS1
-        | step edge reachable =>
-            rw [completeS1 _ edge] at reachable
-            cases reachable with
-            | refl => exact safeS3
-            | step edge reachable =>
-                rw [completeS3 _ edge] at reachable
-                cases reachable with
-                | refl => exact safeS6
-                | step edge _ => exact False.elim (completeS6 _ edge)
-      · cases reachable with
-        | refl => exact safeS2
-        | step edge reachable =>
-            rcases completeS2 _ edge with rfl | rfl
-            · cases reachable with
-              | refl => exact safeS4
-              | step edge reachable =>
-                  rw [completeS4 _ edge] at reachable
-                  cases reachable with
-                  | refl => exact safeS7
-                  | step edge _ => exact False.elim (completeS7 _ edge)
-            · cases reachable with
-              | refl => exact safeS5
-              | step edge reachable =>
-                  rw [completeS5 _ edge] at reachable
-                  cases reachable with
-                  | refl => exact safeS8
-                  | step edge _ => exact False.elim (completeS8 _ edge)
+      · exact safeFromS1 _ reachable
+      · exact safeFromS2 _ reachable
 
 
 /-! ### Certify the accumulated local obligations -/
@@ -579,8 +635,9 @@ axiom completeS8 : ∀ target, Step s8 target → False
 /-- The deferred conditions from every nested expansion are discharged here. -/
 theorem modelCheckCondition : modelCheck.condition := by
   simp [modelCheck, Lax.bind, Lax.ret, Lax.assume, Lax.condition]
-  exact ⟨completeS5, completeS7, completeS4, completeS2, completeS6,
-    completeS3, completeS1, completeS0, completeS8⟩
+  exact ⟨completeS5,
+    ⟨⟨completeS4, completeS7⟩, completeS2,
+      ⟨⟨completeS3, completeS1, completeS6⟩, completeS0, completeS8⟩⟩⟩
 -- TODO: prove one by one as lemmas without explicitly stating completeness prop
 
 /-- Eliminate `◯` only after the whole model-checking proof has been built. -/
