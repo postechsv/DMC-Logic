@@ -517,95 +517,106 @@ The main theorem states global safety directly. Its proof bullets follow the
 computed graph, while each `lax_assume` records that the displayed outgoing
 edges at one state are complete.
 -/
+-- TODO: eliminate recursive structure due to let ... : make it truely forward
+-- make it tail-recursive?
 def modelCheck : ◯(∀ target, Reachable s0 target → isSafe target) := by
-  lax_assume (∀ target, Step s0 target → target = s1 ∨ target = s2) as completeS0
+  have currentSafe : isSafe s0 := safeS0
+  lax_assume (∀ target, Step s0 target → target = s1 ∨ target = s2) as completeHere
 
   let checkS1 : ◯(∀ target, Reachable s1 target → isSafe target) := by
-    lax_assume (∀ target, Step s1 target → target = s3) as completeS1
+    have currentSafe : isSafe s1 := safeS1
+    lax_assume (∀ target, Step s1 target → target = s3) as completeHere
 
     let checkS3 : ◯(∀ target, Reachable s3 target → isSafe target) := by
-      lax_assume (∀ target, Step s3 target → target = s6) as completeS3
+      have currentSafe : isSafe s3 := safeS3
+      lax_assume (∀ target, Step s3 target → target = s6) as completeHere
 
       let checkS6 : ◯(∀ target, Reachable s6 target → isSafe target) := by
-        lax_assume (∀ target, Step s6 target → False) as completeS6
+        have currentSafe : isSafe s6 := safeS6
+        lax_assume (∀ target, Step s6 target → False) as completeHere
         lax_return
         intro target reachable
         cases reachable with
-        | refl => exact safeS6
-        | step edge _ => exact False.elim (completeS6 _ edge)
+        | refl => exact currentSafe
+        | step edge _ => exact False.elim (completeHere _ edge)
 
       lax_bind checkS6 as safeFromS6
       lax_return
       intro target reachable
       cases reachable with
-      | refl => exact safeS3
+      | refl => exact currentSafe
       | step edge reachable =>
-          rw [completeS3 _ edge] at reachable
+          rw [completeHere _ edge] at reachable
           exact safeFromS6 _ reachable
 
     lax_bind checkS3 as safeFromS3
     lax_return
     intro target reachable
     cases reachable with
-    | refl => exact safeS1
+    | refl => exact currentSafe
     | step edge reachable =>
-        rw [completeS1 _ edge] at reachable
+        rw [completeHere _ edge] at reachable
         exact safeFromS3 _ reachable
 
   lax_bind checkS1 as safeFromS1
 
   let checkS2 : ◯(∀ target, Reachable s2 target → isSafe target) := by
-    lax_assume (∀ target, Step s2 target → target = s4 ∨ target = s5) as completeS2
+    have currentSafe : isSafe s2 := safeS2
+    lax_assume (∀ target, Step s2 target → target = s4 ∨ target = s5) as completeHere
 
     let checkS4 : ◯(∀ target, Reachable s4 target → isSafe target) := by
-      lax_assume (∀ target, Step s4 target → target = s7) as completeS4
+      have currentSafe : isSafe s4 := safeS4
+      lax_assume (∀ target, Step s4 target → target = s7) as completeHere
 
       let checkS7 : ◯(∀ target, Reachable s7 target → isSafe target) := by
-        lax_assume (∀ target, Step s7 target → False) as completeS7
+        have currentSafe : isSafe s7 := safeS7
+        lax_assume (∀ target, Step s7 target → False) as completeHere
         lax_return
         intro target reachable
         cases reachable with
-        | refl => exact safeS7
-        | step edge _ => exact False.elim (completeS7 _ edge)
+        | refl => exact currentSafe
+        | step edge _ => exact False.elim (completeHere _ edge)
 
       lax_bind checkS7 as safeFromS7
       lax_return
       intro target reachable
       cases reachable with
-      | refl => exact safeS4
+      | refl => exact currentSafe
       | step edge reachable =>
-          rw [completeS4 _ edge] at reachable
+          rw [completeHere _ edge] at reachable
           exact safeFromS7 _ reachable
 
     lax_bind checkS4 as safeFromS4
 
     let checkS5 : ◯(∀ target, Reachable s5 target → isSafe target) := by
-      lax_assume (∀ target, Step s5 target → target = s8) as completeS5
+      have currentSafe : isSafe s5 := safeS5
+      lax_assume (∀ target, Step s5 target → target = s8) as completeHere
 
       let checkS8 : ◯(∀ target, Reachable s8 target → isSafe target) := by
-        lax_assume (∀ target, Step s8 target → False) as completeS8
+        have currentSafe : isSafe s8 := safeS8
+        lax_assume (∀ target, Step s8 target → False) as completeHere
         lax_return
         intro target reachable
         cases reachable with
-        | refl => exact safeS8
-        | step edge _ => exact False.elim (completeS8 _ edge)
+        | refl => exact currentSafe
+        | step edge _ => exact False.elim (completeHere _ edge)
 
       lax_bind checkS8 as safeFromS8
       lax_return
       intro target reachable
       cases reachable with
-      | refl => exact safeS5
+      | refl => exact currentSafe
       | step edge reachable =>
-          rw [completeS5 _ edge] at reachable
+          rw [completeHere _ edge] at reachable
           exact safeFromS8 _ reachable
 
     lax_bind checkS5 as safeFromS5
     lax_return
     intro target reachable
     cases reachable with
-    | refl => exact safeS2
+    | refl => exact currentSafe
     | step edge reachable =>
-        rcases completeS2 _ edge with rfl | rfl
+        rcases completeHere _ edge with rfl | rfl
         · exact safeFromS4 _ reachable
         · exact safeFromS5 _ reachable
 
@@ -613,9 +624,9 @@ def modelCheck : ◯(∀ target, Reachable s0 target → isSafe target) := by
   lax_return
   intro target reachable
   cases reachable with
-  | refl => exact safeS0
+  | refl => exact currentSafe
   | step edge reachable =>
-      rcases completeS0 _ edge with rfl | rfl
+      rcases completeHere _ edge with rfl | rfl
       · exact safeFromS1 _ reachable
       · exact safeFromS2 _ reachable
 
