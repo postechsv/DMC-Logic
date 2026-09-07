@@ -511,7 +511,7 @@ inductive Reachable : State → State → Prop where
       Step source middle → Reachable middle target → Reachable source target
 
 /-- Every state reachable from `source`, including `source`, is safe. -/
-def AllSafe (source : State) : Prop :=
+def SafeFrom (source : State) : Prop :=
   ∀ target, Reachable source target → isSafe target
 
 /--
@@ -522,8 +522,8 @@ unary nodes, and branching nodes.
 theorem allSafe_of_children {source : State} {computedChild : State → Prop}
     (safeHere : isSafe source)
     (complete : ∀ child, Step source child → computedChild child)
-    (safeChildren : ∀ child, computedChild child → AllSafe child) :
-    AllSafe source := by
+    (safeChildren : ∀ child, computedChild child → SafeFrom child) :
+    SafeFrom source := by
   intro target reachable
   cases reachable with
   | refl => exact safeHere
@@ -544,11 +544,11 @@ edges at one state are complete.
 -- completeness: suffices to check modelcheck s1 and modelcheck s2
 -- so parameterize the modelCheck by state
 -- TODO: what if it is general directed graph rather than tree?
-def modelCheck : ◯(AllSafe s0) := by
+def modelCheck : ◯(SafeFrom s0) := by
   have currentSafe : isSafe s0 := safeS0
   lax_assume (∀ target, Step s0 target → target = s1 ∨ target = s2) as completeHere
 
-  refine Lax.mono (α := AllSafe s1 ∧ AllSafe s2) (by
+  refine Lax.mono (α := SafeFrom s1 ∧ SafeFrom s2) (by
     rintro ⟨safeFromS1, safeFromS2⟩
     apply allSafe_of_children currentSafe completeHere
     intro child generated
@@ -560,7 +560,7 @@ def modelCheck : ◯(AllSafe s0) := by
     have currentSafe : isSafe s1 := safeS1
     lax_assume (∀ target, Step s1 target → target = s3) as completeHere
 
-    refine Lax.mono (α := AllSafe s3) (by
+    refine Lax.mono (α := SafeFrom s3) (by
       intro safeFromS3
       apply allSafe_of_children currentSafe completeHere
       intro child generated
@@ -571,7 +571,7 @@ def modelCheck : ◯(AllSafe s0) := by
       have currentSafe : isSafe s3 := safeS3
       lax_assume (∀ target, Step s3 target → target = s6) as completeHere
 
-      refine Lax.mono (α := AllSafe s6) (by
+      refine Lax.mono (α := SafeFrom s6) (by
         intro safeFromS6
         apply allSafe_of_children currentSafe completeHere
         intro child generated
@@ -590,7 +590,7 @@ def modelCheck : ◯(AllSafe s0) := by
     have currentSafe : isSafe s2 := safeS2
     lax_assume (∀ target, Step s2 target → target = s4 ∨ target = s5) as completeHere
 
-    refine Lax.mono (α := AllSafe s4 ∧ AllSafe s5) (by
+    refine Lax.mono (α := SafeFrom s4 ∧ SafeFrom s5) (by
       rintro ⟨safeFromS4, safeFromS5⟩
       apply allSafe_of_children currentSafe completeHere
       intro child generated
@@ -602,7 +602,7 @@ def modelCheck : ◯(AllSafe s0) := by
       have currentSafe : isSafe s4 := safeS4
       lax_assume (∀ target, Step s4 target → target = s7) as completeHere
 
-      refine Lax.mono (α := AllSafe s7) (by
+      refine Lax.mono (α := SafeFrom s7) (by
         intro safeFromS7
         apply allSafe_of_children currentSafe completeHere
         intro child generated
@@ -621,7 +621,7 @@ def modelCheck : ◯(AllSafe s0) := by
       have currentSafe : isSafe s5 := safeS5
       lax_assume (∀ target, Step s5 target → target = s8) as completeHere
 
-      refine Lax.mono (α := AllSafe s8) (by
+      refine Lax.mono (α := SafeFrom s8) (by
         intro safeFromS8
         apply allSafe_of_children currentSafe completeHere
         intro child generated
