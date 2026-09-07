@@ -510,6 +510,26 @@ inductive Reachable : State → State → Prop where
   | step {source middle target} :
       Step source middle → Reachable middle target → Reachable source target
 
+/-- Every state reachable from `source`, including `source`, is safe. -/
+def AllSafe (source : State) : Prop :=
+  ∀ target, Reachable source target → isSafe target
+
+/--
+Local safety and exhaustive computed children suffice for global safety from
+the current state.  The predicate `computedChild` uniformly covers leaves,
+unary nodes, and branching nodes.
+-/
+theorem allSafe_of_children {source : State} {computedChild : State → Prop}
+    (safeHere : isSafe source)
+    (complete : ∀ child, Step source child → computedChild child)
+    (safeChildren : ∀ child, computedChild child → AllSafe child) :
+    AllSafe source := by
+  intro target reachable
+  cases reachable with
+  | refl => exact safeHere
+  | step edge reachable =>
+      exact safeChildren _ (complete _ edge) _ reachable
+
 /-! ### Construct the safety proof before certifying successor completeness -/
 
 /--
@@ -519,116 +539,102 @@ edges at one state are complete.
 -/
 -- TODO: eliminate recursive structure due to let ... : make it truely forward
 -- make it tail-recursive?
-def modelCheck : ◯(∀ target, Reachable s0 target → isSafe target) := by
+-- maybe i may modify the completeness
+-- e.g. s0 -> s1, s2
+-- completeness: suffices to check modelcheck s1 and modelcheck s2
+-- so parameterize the modelCheck by state
+-- TODO: what if it is general directed graph rather than tree?
+def modelCheck : ◯(AllSafe s0) := by
   have currentSafe : isSafe s0 := safeS0
   lax_assume (∀ target, Step s0 target → target = s1 ∨ target = s2) as completeHere
 
-  let checkS1 : ◯(∀ target, Reachable s1 target → isSafe target) := by
+  refine Lax.mono (α := AllSafe s1 ∧ AllSafe s2) (by
+    rintro ⟨safeFromS1, safeFromS2⟩
+    apply allSafe_of_children currentSafe completeHere
+    intro child generated
+    rcases generated with rfl | rfl
+    · exact safeFromS1
+    · exact safeFromS2) (Lax.strength ?_ ?_)
+
+  · -- s1
     have currentSafe : isSafe s1 := safeS1
     lax_assume (∀ target, Step s1 target → target = s3) as completeHere
 
-    let checkS3 : ◯(∀ target, Reachable s3 target → isSafe target) := by
+    refine Lax.mono (α := AllSafe s3) (by
+      intro safeFromS3
+      apply allSafe_of_children currentSafe completeHere
+      intro child generated
+      rw [generated]
+      exact safeFromS3) ?_
+
+    · -- s3
       have currentSafe : isSafe s3 := safeS3
       lax_assume (∀ target, Step s3 target → target = s6) as completeHere
 
-      let checkS6 : ◯(∀ target, Reachable s6 target → isSafe target) := by
+      refine Lax.mono (α := AllSafe s6) (by
+        intro safeFromS6
+        apply allSafe_of_children currentSafe completeHere
+        intro child generated
+        rw [generated]
+        exact safeFromS6) ?_
+
+      · -- s6
         have currentSafe : isSafe s6 := safeS6
         lax_assume (∀ target, Step s6 target → False) as completeHere
         lax_return
-        intro target reachable
-        cases reachable with
-        | refl => exact currentSafe
-        | step edge _ => exact False.elim (completeHere _ edge)
+        apply allSafe_of_children currentSafe completeHere
+        intro child impossible
+        exact False.elim impossible
 
-      lax_bind checkS6 as safeFromS6
-      lax_return
-      intro target reachable
-      cases reachable with
-      | refl => exact currentSafe
-      | step edge reachable =>
-          rw [completeHere _ edge] at reachable
-          exact safeFromS6 _ reachable
-
-    lax_bind checkS3 as safeFromS3
-    lax_return
-    intro target reachable
-    cases reachable with
-    | refl => exact currentSafe
-    | step edge reachable =>
-        rw [completeHere _ edge] at reachable
-        exact safeFromS3 _ reachable
-
-  lax_bind checkS1 as safeFromS1
-
-  let checkS2 : ◯(∀ target, Reachable s2 target → isSafe target) := by
+  · -- s2
     have currentSafe : isSafe s2 := safeS2
     lax_assume (∀ target, Step s2 target → target = s4 ∨ target = s5) as completeHere
 
-    let checkS4 : ◯(∀ target, Reachable s4 target → isSafe target) := by
+    refine Lax.mono (α := AllSafe s4 ∧ AllSafe s5) (by
+      rintro ⟨safeFromS4, safeFromS5⟩
+      apply allSafe_of_children currentSafe completeHere
+      intro child generated
+      rcases generated with rfl | rfl
+      · exact safeFromS4
+      · exact safeFromS5) (Lax.strength ?_ ?_)
+
+    · -- s4
       have currentSafe : isSafe s4 := safeS4
       lax_assume (∀ target, Step s4 target → target = s7) as completeHere
 
-      let checkS7 : ◯(∀ target, Reachable s7 target → isSafe target) := by
+      refine Lax.mono (α := AllSafe s7) (by
+        intro safeFromS7
+        apply allSafe_of_children currentSafe completeHere
+        intro child generated
+        rw [generated]
+        exact safeFromS7) ?_
+
+      · -- s7
         have currentSafe : isSafe s7 := safeS7
         lax_assume (∀ target, Step s7 target → False) as completeHere
         lax_return
-        intro target reachable
-        cases reachable with
-        | refl => exact currentSafe
-        | step edge _ => exact False.elim (completeHere _ edge)
+        apply allSafe_of_children currentSafe completeHere
+        intro child impossible
+        exact False.elim impossible
 
-      lax_bind checkS7 as safeFromS7
-      lax_return
-      intro target reachable
-      cases reachable with
-      | refl => exact currentSafe
-      | step edge reachable =>
-          rw [completeHere _ edge] at reachable
-          exact safeFromS7 _ reachable
-
-    lax_bind checkS4 as safeFromS4
-
-    let checkS5 : ◯(∀ target, Reachable s5 target → isSafe target) := by
+    · -- s5
       have currentSafe : isSafe s5 := safeS5
       lax_assume (∀ target, Step s5 target → target = s8) as completeHere
 
-      let checkS8 : ◯(∀ target, Reachable s8 target → isSafe target) := by
+      refine Lax.mono (α := AllSafe s8) (by
+        intro safeFromS8
+        apply allSafe_of_children currentSafe completeHere
+        intro child generated
+        rw [generated]
+        exact safeFromS8) ?_
+
+      · -- s8
         have currentSafe : isSafe s8 := safeS8
         lax_assume (∀ target, Step s8 target → False) as completeHere
         lax_return
-        intro target reachable
-        cases reachable with
-        | refl => exact currentSafe
-        | step edge _ => exact False.elim (completeHere _ edge)
-
-      lax_bind checkS8 as safeFromS8
-      lax_return
-      intro target reachable
-      cases reachable with
-      | refl => exact currentSafe
-      | step edge reachable =>
-          rw [completeHere _ edge] at reachable
-          exact safeFromS8 _ reachable
-
-    lax_bind checkS5 as safeFromS5
-    lax_return
-    intro target reachable
-    cases reachable with
-    | refl => exact currentSafe
-    | step edge reachable =>
-        rcases completeHere _ edge with rfl | rfl
-        · exact safeFromS4 _ reachable
-        · exact safeFromS5 _ reachable
-
-  lax_bind checkS2 as safeFromS2
-  lax_return
-  intro target reachable
-  cases reachable with
-  | refl => exact currentSafe
-  | step edge reachable =>
-      rcases completeHere _ edge with rfl | rfl
-      · exact safeFromS1 _ reachable
-      · exact safeFromS2 _ reachable
+        apply allSafe_of_children currentSafe completeHere
+        intro child impossible
+        exact False.elim impossible
 
 
 /-! ### Certify the accumulated local obligations -/
@@ -645,7 +651,8 @@ axiom completeS8 : ∀ target, Step s8 target → False
 
 /-- The deferred conditions from every nested expansion are discharged here. -/
 theorem modelCheckCondition : modelCheck.condition := by
-  simp [modelCheck, Lax.bind, Lax.ret, Lax.assume, Lax.condition]
+  simp [modelCheck, Lax.bind, Lax.ret, Lax.assume, Lax.condition,
+    Lax.mono, Lax.strength]
   exact ⟨completeS5,
     ⟨⟨completeS4, completeS7⟩, completeS2,
       ⟨⟨completeS3, completeS1, completeS6⟩, completeS0, completeS8⟩⟩⟩
