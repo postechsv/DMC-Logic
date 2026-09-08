@@ -13,12 +13,14 @@ Working examples
   - RComp, LComp, SComp
   - c.f., mono-vs-modu.lean (modular specification demo)
 
-- unification (depends on Bakery/DMC3.lean)
-  - certifying unifier completeness given by Maude
+- unification 
+  - unification.lean (depends on Bakery/DMC3.lean): certifying unifier completeness given by Maude
+  - free-unification.lean (work in progress)
 
 - ClientServer (depends on Bakery/DMC3.lean)
   - compositional verification (PComp)
 
-- pretheorem
+- partial proofs with explicit trust boundary
   - patterns & rules as lambda closures
-  - pretheorems for dynamic generation of proof obligations by getMGUs tactic
+  - pretheorem.lean (ad hoc - deprecated)
+  - laxtheorem.lean (using lax monad)
