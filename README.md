@@ -1,7 +1,6 @@
-# PosCheck
-## Pattern-Oriented Symbolic Model Checker
-- Inspired by DM-Check tool
-- conPanna (Constrained Pattern Narrowing)
+# DMC in Lean
+- framework: SymPaThy (Theory of Symbolic Patterns)
+- tactic: conPanna (Constrained Pattern Narrowing)
 
 ## Examples
 Milestone examples
