@@ -60,6 +60,15 @@ def Symbol.declare {operationType : Type u} (operation : operationType)
 structure EqModule where
   symbols : List (Symbol.{u}) := []
 
+/-!
+## Pattern semantics
+
+All definitions whose primary purpose is to represent or compare patterns live
+under this namespace. They are exported from `framework` below to preserve the
+compact user-facing names used by existing models.
+-/
+namespace Patterns
+
 -- P is a type of atomic patterns denoting sets of α-states.
 class AtPattern (α : outParam (Type u)) [State α] (P : Type v) where
   semantics : P → α → Prop
@@ -99,7 +108,7 @@ structure Disjunction (P : Type v) (Q : Type w) where
   left : P
   right : Q
 
-infixr:65 " ⊔ " => framework.Disjunction.mk
+infixr:65 " ⊔ " => framework.Patterns.Disjunction.mk
 
 instance disjunctionPattern {α : Type u} {P : Type v} {Q : Type w}
     [State α] [Pattern α P] [Pattern α Q] :
@@ -116,25 +125,26 @@ instance emptyAtPattern {α : Type u} [State α] :
     AtPattern α (EmptyPattern α) where
   semantics _ _ := False
 
-def Unifiable {α : Type u} {P : Type v} {Q : Type w}
-    [State α] [AtPattern α P] [AtPattern α Q]
-    (p : P) (q : Q) : Prop :=
-  ∃ state, AtPattern.semantics p state ∧ AtPattern.semantics q state
+/-- Semantic inclusion between two possibly different pattern representations. -/
+def Subsumes {α : Type u} {P : Type v} {Q : Type w}
+    [State α] [Pattern α P] [Pattern α Q]
+    (source : P) (target : Q) : Prop :=
+  ∀ state, Pattern.semantics source state →
+    Pattern.semantics target state
 
-infix:50 " ⋈ " => Unifiable
+infix:50 " ⊑ " => Subsumes
 
-/--
-Unifiability relative to an equational presentation.  Its denotation remains
-semantic intersection; the presentation tells automation which equations it
-may use when constructing and certifying the intersection witness.
+end Patterns
+
+/-!
+## Rule and one-step semantics
+
+Rule representations and all judgments that fundamentally mention a rule live
+under this namespace.
 -/
-def UnifiableIn {α : Type u} {P : Type v} {Q : Type w}
-    [State α] [AtPattern α P] [AtPattern α Q]
-    (_presentation : EqModule) (left : P) (right : Q) : Prop :=
-  Unifiable left right
+namespace Rules
 
-notation:50 left " ⋈[" presentation "] " right =>
-  UnifiableIn presentation left right
+open Patterns
 
 /-- The body returned by a constrained rewrite-rule closure. -/
 structure RuleBody (α : Type u) where
@@ -164,13 +174,6 @@ def postImage {α : Type u} {P : Type v} {R : Type w}
     Pattern.semantics source before ∧
     AtRule.semantics rule before after
 
-/-- Semantic inclusion between two possibly different pattern representations. -/
-def Subsumes {α : Type u} {P : Type v} {Q : Type w}
-    [State α] [Pattern α P] [Pattern α Q]
-    (source : P) (target : Q) : Prop :=
-  ∀ state, Pattern.semantics source state →
-    Pattern.semantics target state
-
 /-- A generated pattern is the exact one-step image of a rule and source. -/
 def NarrowsTo {α : Type u} {P : Type v} {Post : Type w} {R : Type x}
     [State α] [Pattern α P] [Pattern α Post] [AtRule α R]
@@ -192,8 +195,6 @@ notation:40 rule " ⊢ " source " ↝ " post =>
 
 notation:40 rule " ⊢ " source " ↪ " target =>
   mapsInto rule source target
-
-infix:50 " ⊑ " => Subsumes
 
 /-- Compose exact one-step narrowing with subsumption. -/
 theorem mapsInto_of_narrowsTo_of_subsumes
@@ -244,7 +245,45 @@ theorem mapsInto_iff_subsumes_of_narrowsTo
     exact hmaps before state hsource hrule
   · exact mapsInto_of_narrowsTo_of_subsumes hnarrow
 
+end Rules
+
+-- Preserve the concise modelling API while keeping declaration ownership
+-- visible in the namespace tree.
+export Patterns (AtPattern PatternBody Pattern Disjunction EmptyPattern Subsumes)
+export Rules (RuleBody AtRule postImage NarrowsTo mapsInto
+  mapsInto_of_narrowsTo_of_subsumes mapsInto_via_narrowing
+  mapsInto_iff_subsumes_of_narrowsTo)
+
 end framework
+
+
+namespace Unification
+
+universe u v w
+
+open framework framework.Patterns
+
+def Unifiable {α : Type u} {P : Type v} {Q : Type w}
+    [State α] [AtPattern α P] [AtPattern α Q]
+    (p : P) (q : Q) : Prop :=
+  ∃ state, AtPattern.semantics p state ∧ AtPattern.semantics q state
+
+infix:50 " ⋈ " => Unifiable
+
+/--
+Unifiability relative to an equational presentation. Its denotation remains
+semantic intersection; the presentation tells automation which equations it
+may use when constructing and certifying the intersection witness.
+-/
+def UnifiableIn {α : Type u} {P : Type v} {Q : Type w}
+    [State α] [AtPattern α P] [AtPattern α Q]
+    (_presentation : EqModule) (left : P) (right : Q) : Prop :=
+  Unifiable left right
+
+notation:50 left " ⋈[" presentation "] " right =>
+  UnifiableIn presentation left right
+
+end Unification
 
 
 
@@ -300,9 +339,9 @@ def saturatePattern (pattern : Expr) : MetaM SaturatedPattern := do
 def ofUnifiableType (type : Expr) : MetaM Input := do
   let type ← instantiateMVars type
   let arguments := type.getAppArgs
-  let isDefault := type.getAppFn.isConstOf ``Unifiable
+  let isDefault := type.getAppFn.isConstOf ``Unification.Unifiable
   let isPresentationIndexed :=
-    type.getAppFn.isConstOf ``framework.UnifiableIn
+    type.getAppFn.isConstOf ``Unification.UnifiableIn
   unless (isDefault && arguments.size >= 2) ||
       (isPresentationIndexed && arguments.size >= 3) do
     throwError "expected a hypothesis of the form `p ⋈ q`"
@@ -1274,9 +1313,9 @@ def saturateRule (rule : Expr) : MetaM SaturatedRule := do
     return {
       value := rule
       closure
-      lhs := ← project ``RuleBody.lhs application
-      rhs := ← project ``RuleBody.rhs application
-      requires := ← project ``RuleBody.requires application
+      lhs := ← project ``framework.Rules.RuleBody.lhs application
+      rhs := ← project ``framework.Rules.RuleBody.rhs application
+      requires := ← project ``framework.Rules.RuleBody.requires application
     }
   catch _ =>
     throwError "`narrow` expects a closure returning `RuleBody`"
@@ -1288,8 +1327,8 @@ def saturateSource (source : Expr) : MetaM SaturatedConstrainedPattern := do
     return {
       value := source
       closure
-      term := ← project ``PatternBody.term application
-      requires := ← project ``PatternBody.requires application
+      term := ← project ``framework.Patterns.PatternBody.term application
+      requires := ← project ``framework.Patterns.PatternBody.requires application
     }
   catch _ =>
     throwError "`narrow` expects a closure returning `PatternBody`"
@@ -1322,7 +1361,8 @@ structure SubsumptionInput where
 def ofSubsumesType (type : Expr) : MetaM SubsumptionInput := do
   let type ← instantiateMVars type
   let arguments := type.getAppArgs
-  unless type.getAppFn.isConstOf ``Subsumes && arguments.size >= 2 do
+  unless type.getAppFn.isConstOf ``framework.Patterns.Subsumes &&
+      arguments.size >= 2 do
     throwError "`subsume` expects a goal of the form `source ⊑ target`"
   return {
     source := arguments[arguments.size - 2]!
@@ -1382,11 +1422,11 @@ private def projections (problem : Problem.Input)
   let sourceValue ← withTransparency .all <|
     whnf (mkAppN problem.source.value sourceArguments)
   let rhs ← withTransparency .all <|
-    whnf (← mkAppM ``RuleBody.rhs #[ruleValue])
+    whnf (← mkAppM ``framework.Rules.RuleBody.rhs #[ruleValue])
   let ruleRequires ← withTransparency .all <|
-    whnf (← mkAppM ``RuleBody.requires #[ruleValue])
+    whnf (← mkAppM ``framework.Rules.RuleBody.requires #[ruleValue])
   let sourceRequires ← withTransparency .all <|
-    whnf (← mkAppM ``PatternBody.requires #[sourceValue])
+    whnf (← mkAppM ``framework.Patterns.PatternBody.requires #[sourceValue])
   return (rhs, sourceRequires, ruleRequires)
 
 /-- Turn one backend alternative into its constrained successor closure. -/
@@ -1396,17 +1436,18 @@ def successor (problem : Problem.Input)
     let (rhs, sourceRequires, ruleRequires) ←
       projections problem alternative basis
     let requires ← mkAppM ``And #[sourceRequires, ruleRequires]
-    let body ← mkAppM ``PatternBody.mk #[rhs, requires]
+    let body ← mkAppM ``framework.Patterns.PatternBody.mk #[rhs, requires]
     mkLambdaFVars basis body
 
 private def empty (problem : Problem.Input) : MetaM Expr := do
   let stateType ← inferType problem.rule.lhs
   let .sort (.succ level) ← whnf (← inferType stateType)
     | throwError "the narrowing state is not a type"
-  return mkApp (mkConst ``EmptyPattern.empty [level]) stateType
+  return mkApp
+    (mkConst ``framework.Patterns.EmptyPattern.empty [level]) stateType
 
 private def disjoin (left right : Expr) : MetaM Expr :=
-  mkAppM ``Disjunction.mk #[left, right]
+  mkAppM ``framework.Patterns.Disjunction.mk #[left, right]
 
 /--
 Materialize every MGU as an atomic successor and combine the successors into
@@ -1476,9 +1517,12 @@ def prove (ref : Syntax) (rule source : Expr)
   try
     evalTactic (← `(tactic|
       have $narrowingIdent:ident :
-          NarrowsTo $ruleSyntax $sourceSyntax ($postIdent:term) := by
-        simp [NarrowsTo, postImage, Pattern.semantics,
-          AtPattern.semantics, AtRule.semantics,
+          framework.Rules.NarrowsTo
+            $ruleSyntax $sourceSyntax ($postIdent:term) := by
+        simp [framework.Rules.NarrowsTo, framework.Rules.postImage,
+          framework.Patterns.Pattern.semantics,
+          framework.Patterns.AtPattern.semantics,
+          framework.Rules.AtRule.semantics,
           $postIdent:term, $unfoldSimps,*] <;>
           grind))
   catch exception =>
@@ -1542,7 +1586,9 @@ def run : TacticM Unit := do
   let unfoldSimps ← unfoldNames.mapM fun name =>
     `(Parser.Tactic.simpLemma| $(mkIdent name):ident)
   evalTactic (← `(tactic|
-    simp [Subsumes, Pattern.semantics, AtPattern.semantics,
+    simp [framework.Patterns.Subsumes,
+      framework.Patterns.Pattern.semantics,
+      framework.Patterns.AtPattern.semantics,
       $unfoldSimps,*] <;>
       grind))
 

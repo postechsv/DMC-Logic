@@ -43,8 +43,8 @@ of states:
 ⟦p⟧ = { state : α | state satisfies p }
 ```
 
-The class `framework.AtPattern α P` assigns this meaning to an atomic pattern
-representation `P`:
+The class `framework.Patterns.AtPattern α P` assigns this meaning to an atomic
+pattern representation `P`:
 
 ```lean
 class AtPattern (α : outParam (Type u)) [State α] (P : Type v) where
@@ -104,13 +104,13 @@ fun n : Nat => {
 
 denotes exactly the pairs whose second payload is positive.
 
-`framework.Pattern` extends atomic patterns with finite disjunction.
+`framework.Patterns.Pattern` extends atomic patterns with finite disjunction.
 `Disjunction P Q` permits its two branches to have different Lean
 representations, and `EmptyPattern α` denotes the empty set.
 
 #### 1.1.2 Unifiability is semantic intersection
 
-The framework defines:
+The `Unification` namespace defines:
 
 ```lean
 def Unifiable (p : P) (q : Q) : Prop :=
@@ -416,11 +416,18 @@ intended as future file boundaries.
 Public judgments and tactics
 │
 ├── framework
-│   ├── semantic domains: State, AtPattern, Pattern, AtRule
-│   ├── judgments: Unifiable, NarrowsTo, Subsumes, mapsInto
-│   └── equational registration: Axiom, Symbol, EqModule
+│   ├── State                     shared semantic state marker
+│   ├── Patterns
+│   │   ├── AtPattern, Pattern, PatternBody
+│   │   ├── Disjunction, EmptyPattern
+│   │   └── Subsumes
+│   ├── Rules
+│   │   ├── AtRule, RuleBody, postImage
+│   │   └── NarrowsTo, mapsInto, decomposition theorems
+│   └── Axiom, Symbol, EqModule   shared equational registration
 │
 ├── Unification
+│   ├── Unifiable, UnifiableIn     semantic intersection judgments
 │   ├── Tactic                     top-level orchestrator
 │   │   ├── Problem                extract a first-order equation
 │   │   ├── PresentationElaboration choose free or C from EqModule
@@ -472,7 +479,23 @@ oracle possible without redesigning the user interface.
 This section starts at the outside of the tree: what users state and what the
 tactics promise.
 
-### 2.1 The framework layer
+### 2.1 The semantic layer and its namespace boundaries
+
+Shared model infrastructure remains directly under `framework`. Pattern-only
+definitions live under `framework.Patterns`, and rule/one-step definitions
+live under `framework.Rules`. Their established names are re-exported from
+`framework`, so existing user code can still write:
+
+```lean
+open framework
+
+def source (x : Conf) : PatternBody Conf := ...
+def rule (x : Conf) : RuleBody Conf := ...
+```
+
+The plural namespace names avoid a redundant declaration such as
+`framework.Pattern.Pattern` while preserving the existing class name
+`Pattern`.
 
 #### 2.1.1 State and atomic-pattern interfaces
 
@@ -485,10 +508,10 @@ instance : framework.State Conf := ⟨⟩
 `State` carries no syntax and imposes no variable representation. It only
 marks the intended semantic state type for typeclass inference.
 
-`AtPattern` supplies atomic semantics. `Pattern` supplies semantics closed
-under disjunction. This split is why narrowing can return a heterogeneous
-disjunction of successor closures while individual user patterns remain simple
-lambda closures.
+`framework.Patterns.AtPattern` supplies atomic semantics.
+`framework.Patterns.Pattern` supplies semantics closed under disjunction. This
+split is why narrowing can return a heterogeneous disjunction of successor
+closures while individual user patterns remain simple lambda closures.
 
 The representations form this semantic tree:
 
@@ -508,7 +531,8 @@ EmptyPattern α                      false atomic branch
 
 #### 2.1.2 Rule interface
 
-`AtRule α R` interprets a rule representation as a relation between states:
+`framework.Rules.AtRule α R` interprets a rule representation as a relation
+between states:
 
 ```lean
 class AtRule (α : outParam (Type u)) [State α] (R : Type v) where
@@ -524,9 +548,10 @@ lhs = before ∧ rhs = after ∧ requires.
 As with patterns, the function instance interprets rule closures
 existentially. One lambda therefore shares variables across all three fields.
 
-#### 2.1.3 Unification judgments
+#### 2.1.3 Unification judgments are not framework-owned
 
-The two forms are:
+The two forms live under `Unification`, because pattern and rule semantics do
+not depend on unification:
 
 ```lean
 p ⋈ q
@@ -1543,7 +1568,9 @@ mapsInto_via_narrowing
 
 | Component | Input | Output | Replaceable without changing users? |
 |---|---|---|---|
-| `framework.AtPattern` | user representation | set-of-states semantics | yes, per representation |
+| `framework.Patterns.AtPattern` | user representation | set-of-states semantics | yes, per representation |
+| `framework.Rules.AtRule` | user rule representation | transition-relation semantics | yes, per representation |
+| `Unification.Unifiable` | two atomic patterns | semantic-intersection proposition | stable semantic boundary |
 | `Unification.Problem` | `p ⋈ q` hypothesis type | saturated equation | normally stable |
 | `PresentationElaboration` | `EqModule` | backend tag | yes |
 | `Free.solve` | saturated equation | private free candidates | yes |
@@ -1618,7 +1645,8 @@ The prototype distinguishes computation from proof.
 Ultimately trusted:
 
 - Lean's kernel;
-- the semantic definitions in `framework`; and
+- the semantic definitions in `framework.Patterns`, `framework.Rules`, and
+  `Unification`; and
 - explicit user axioms such as `f_comm` and `f_eq_iff`, when the example
   chooses to assume them.
 
@@ -1794,7 +1822,8 @@ goal: advance ⊢ source ↪ target
 For a code review or advisor discussion, the following order mirrors this
 document and avoids beginning in low-level metaprogramming:
 
-1. `framework.Unifiable`, `NarrowsTo`, `Subsumes`, and `mapsInto`;
+1. `framework.Patterns`, `framework.Rules`, and
+   `Unification.Unifiable`/`UnifiableIn`;
 2. the free and narrowing examples at the bottom of the file;
 3. `Unification.Certificate` as the central modular interface;
 4. `Unification.Tactic.runWith` as the outer workflow;
