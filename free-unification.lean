@@ -257,11 +257,18 @@ export Rules (RuleBody AtRule postImage NarrowsTo mapsInto
 end framework
 
 
+
+
+
+
+open Lean Meta Elab Term Tactic
+open framework framework.Patterns
+
 namespace Unification
 
 universe u v w
 
-open framework framework.Patterns
+
 
 def Unifiable {α : Type u} {P : Type v} {Q : Type w}
     [State α] [AtPattern α P] [AtPattern α Q]
@@ -282,18 +289,6 @@ def UnifiableIn {α : Type u} {P : Type v} {Q : Type w}
 
 notation:50 left " ⋈[" presentation "] " right =>
   UnifiableIn presentation left right
-
-end Unification
-
-
-
-
-open Lean Meta Elab Term Tactic
-open framework
-
-namespace Unification
-
-universe u v w
 
 /-!
 The implementation is intentionally split into namespaces that can later
