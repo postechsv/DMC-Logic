@@ -1,5 +1,5 @@
-# DMC in Lean
-- framework: SymPaThy (Theory of Symbolic Patterns)
+# DMC in Lean (Expresso conPanna)
+- framework: Expresso (Semantics of Formal Expressions)
 - tactic: conPanna (Constrained Pattern Narrowing)
 
 ## Examples
