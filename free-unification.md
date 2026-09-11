@@ -18,7 +18,7 @@ The current implementation includes:
 - a free-unification tactic based on Lean's native unifier with kernel-checked
   soundness and a user-level completeness obligation;
 - a prototype unifier for free commutative symbols;
-- a uniform, arbitrary-arity equational-module interface;
+- a uniform, arbitrary-arity `Theory` interface;
 - one-step constrained narrowing built as a client of the unification result
   format; and
 - subsumption automation for completing simple reachability proofs.
@@ -43,29 +43,31 @@ of states:
 ⟦p⟧ = { state : α | state satisfies p }
 ```
 
-The class `framework.Patterns.AtPattern α P` assigns this meaning to an atomic
+The class `framework.Patterns.APatt α P` assigns this meaning to an atomic
 pattern representation `P`:
 
 ```lean
-class AtPattern (α : outParam (Type u)) [State α] (P : Type v) where
+class APatt (α : outParam (Type u)) [State α] (P : Type v) where
   semantics : P → α → Prop
 ```
 
-Two instances create the user-facing closure representation.
+Three canonical instances—model values, constrained bodies, and function
+closures—are anonymous because clients use them only through typeclass
+synthesis.
 
 A state value denotes the singleton containing that value:
 
 ```lean
-instance [State α] : AtPattern α α where
+instance [State α] : APatt α α where
   semantics pattern state := pattern = state
 ```
 
 A function closure existentially binds its argument:
 
 ```lean
-instance [State α] [AtPattern α P] : AtPattern α (A → P) where
+instance [State α] [APatt α P] : APatt α (A → P) where
   semantics pattern state :=
-    ∃ argument, AtPattern.semantics (pattern argument) state
+    ∃ argument, APatt.semantics (pattern argument) state
 ```
 
 Therefore
@@ -78,10 +80,10 @@ means all `Conf` states of the form `Conf.f x y`. Nested Lean lambdas become
 nested semantic existential quantifiers. The logical variables `x` and `y`
 are not values stored inside `Conf`.
 
-A constrained atomic pattern returns `PatternBody α`:
+A constrained atomic pattern returns `APattBody α`:
 
 ```lean
-structure PatternBody (α : Type u) where
+structure APattBody (α : Type u) where
   term : α
   requires : Prop := True
 ```
@@ -91,6 +93,10 @@ Its semantics is:
 ```text
 term = state ∧ requires
 ```
+
+`APattBody` is the single constrained atomic representation. The previous
+`α × Prop` instance was removed because it expressed exactly the same
+semantics with less informative field access and no default condition.
 
 Thus the same closure binds variables shared by the term and its condition.
 For example:
@@ -115,8 +121,8 @@ The `Unification` namespace defines:
 ```lean
 def Unifiable (p : P) (q : Q) : Prop :=
   ∃ state,
-    AtPattern.semantics p state ∧
-    AtPattern.semantics q state
+    APatt.semantics p state ∧
+    APatt.semantics q state
 
 infix:50 " ⋈ " => Unifiable
 ```
@@ -207,7 +213,7 @@ for every original argument tuple x,
 `unify` deliberately emits this proposition as its first proof goal. It is
 independent of the particular hypothesis `h`; the tactic clears `h` from this
 goal. The user may prove it manually, invoke `unify_complete`, or later invoke
-an axiom-specific/external certificate checker. Only after this goal is solved
+a theory-specific/external certificate checker. Only after this goal is solved
 does Lean permit the result branches to depend on the certificate.
 
 Soundness is still mathematically necessary when the result is advertised as
@@ -219,7 +225,7 @@ both properties in `ExactSolutionSet` makes the boundary reusable.
 #### 1.1.5 Multiple MGUs are a disjunction of factorizations
 
 Free unification is unitary: a solvable problem has one MGU up to renaming.
-Other equational axioms can produce a finite complete set of MGUs.
+Other structural operator laws can produce a finite complete set of MGUs.
 
 The common logical result is therefore:
 
@@ -356,11 +362,11 @@ by the tactic. A user normally continues reasoning with `u1`, `h1`, `h2`, and
 The source and target are constrained patterns:
 
 ```lean
-def source (n : Nat) : PatternBody Conf where
+def source (n : Nat) : APattBody Conf where
   term := pair (atom 0) (atom n)
   requires := 0 < n
 
-def target (payload : Nat) : PatternBody Conf where
+def target (payload : Nat) : APattBody Conf where
   term := pair (atom payload) (atom (payload + 1))
   requires := 0 < payload
 ```
@@ -415,26 +421,30 @@ intended as future file boundaries.
 ```text
 Public judgments and tactics
 │
+├── Theory
+│   ├── OperatorLaw                proof-carrying structural laws
+│   ├── Symbol                     operation of arbitrary arity plus laws
+│   └── symbols                    declarative equality theory
+│
 ├── framework
 │   ├── State                     shared semantic state marker
 │   ├── Patterns
-│   │   ├── AtPattern, Pattern, PatternBody
+│   │   ├── APatt, Pattern, APattBody
 │   │   ├── Disjunction, EmptyPattern
 │   │   └── Subsumes
 │   ├── Rules
 │   │   ├── AtRule, RuleBody, postImage
 │   │   └── NarrowsTo, mapsInto, decomposition theorems
-│   └── Axiom, Symbol, EqModule   shared equational registration
 │
 ├── Unification
 │   ├── Unifiable, UnifiableIn     semantic intersection judgments
 │   ├── Tactic                     top-level orchestrator
 │   │   ├── Problem                extract a first-order equation
-│   │   ├── PresentationElaboration choose free or C from EqModule
+│   │   ├── Dispatch               choose free or C from Theory
 │   │   ├── Free or C              compute candidate alternatives
 │   │   ├── soundness checker      reject invalid candidates automatically
 │   │   ├── completeness boundary  emit a user-level theorem goal
-│   │   └── Presentation           expose basis variables/equations
+│   │   └── Exposure               expose basis variables/equations
 │   └── Certificate                solution/sound/exact interchange formats
 │
 └── Narrowing
@@ -465,7 +475,7 @@ Certificate.SolutionSet
      ├── automatic soundness check
      └── user-level completeness proof
      │
-     ├── Presentation: user proof context
+     ├── Exposure: user proof context
      └── Narrowing.Materialization: generated post
 ```
 
@@ -489,7 +499,7 @@ live under `framework.Rules`. Their established names are re-exported from
 ```lean
 open framework
 
-def source (x : Conf) : PatternBody Conf := ...
+def source (x : Conf) : APattBody Conf := ...
 def rule (x : Conf) : RuleBody Conf := ...
 ```
 
@@ -508,7 +518,7 @@ instance : framework.State Conf := ⟨⟩
 `State` carries no syntax and imposes no variable representation. It only
 marks the intended semantic state type for typeclass inference.
 
-`framework.Patterns.AtPattern` supplies atomic semantics.
+`framework.Patterns.APatt` supplies atomic semantics.
 `framework.Patterns.Pattern` supplies semantics closed under disjunction. This
 split is why narrowing can return a heterogeneous disjunction of successor
 closures while individual user patterns remain simple lambda closures.
@@ -516,14 +526,13 @@ closures while individual user patterns remain simple lambda closures.
 The representations form this semantic tree:
 
 ```text
-AtPattern
+APatt
 ├── model value α                    singleton
-├── α × Prop                        equality plus condition
-├── PatternBody α                   term plus condition
+├── APattBody α                     term plus condition
 └── A → P                           existential closure
 
 Pattern
-├── every AtPattern                 atomic branch
+├── every APatt                     atomic branch
 └── Disjunction P Q                 semantic union
 
 EmptyPattern α                      false atomic branch
@@ -558,17 +567,17 @@ p ⋈ q
 p ⋈[M] q
 ```
 
-The first uses free unification by default. The second carries an `EqModule`
-used by automation to select an equational backend.
+The first uses free unification by default. The second carries a `Theory` used
+by automation to select an equational backend.
 
 Logically, `UnifiableIn M p q` currently reduces to `Unifiable p q`:
 
 ```lean
-def UnifiableIn (_presentation : EqModule) (left : P) (right : Q) : Prop :=
+def UnifiableIn (_theory : Theory) (left : P) (right : Q) : Prop :=
   Unifiable left right
 ```
 
-Thus `EqModule` does not alter denotational semantics or add an untrusted
+Thus `Theory` does not alter denotational semantics or add an untrusted
 proposition. It is an explicit automation parameter attached to the theorem
 statement.
 
@@ -677,8 +686,8 @@ elab "unify " h:ident : tactic =>
 elab "c_unify " h:ident : tactic =>
   Unification.Tactic.runC h.raw h
 
-elab "unify " h:ident " in " presentation:term : tactic =>
-  Unification.Tactic.runIn h.raw h presentation
+elab "unify " h:ident " in " theory:term : tactic =>
+  Unification.Tactic.runIn h.raw h theory
 ```
 
 `run`, `runC`, and `runIn` all reach the private higher-order function
@@ -707,7 +716,7 @@ solutions
 8. In a dependent continuation, assume its eventual proof.
 9. Open the semantic witnesses stored in h and derive their concrete equality.
 10. Specialize completeness to obtain the factorization disjunction.
-11. Pass that proof to Presentation.expose.
+11. Pass that proof to `Exposure.expose`.
 12. Clear semantic bookkeeping and return completeness before result goals.
 ```
 
@@ -721,7 +730,7 @@ as the preceding proof obligation. There is no unchecked handoff.
   solver output to the common `SolutionSet`.
 - **Returns:** a completeness goal followed by ordinary result goals containing
   the public unifier data.
-- **Depends on:** `Problem`, one backend, `Certificate`, and `Presentation`.
+- **Depends on:** `Problem`, one backend, `Certificate`, and `Exposure`.
 - **Does not know:** the algorithm used to find substitutions or how the user
   will discharge completeness.
 
@@ -776,12 +785,12 @@ It returns:
 
 ```lean
 structure Input where
-  presentation? : Option Expr
+  theory? : Option Expr
   lhs : SaturatedPattern
   rhs : SaturatedPattern
 ```
 
-The optional presentation is metadata for dispatch. Both backends receive the
+The optional theory is metadata for dispatch. Both backends receive the
 same saturated left and right equation.
 
 #### Boundary of `Unification.Problem`
@@ -896,7 +905,7 @@ structure ExactSolutionSet extends SoundSolutionSet where
   completenessProof : Expr
 ```
 
-`ProvenAlternative` and `ProvenSolutionSet` are downstream presentation
+`ProvenAlternative` and `ProvenSolutionSet` are downstream exposure
 packages. They pair the actual witnesses extracted from one `h` with the
 factorization proposition needed to open basis variables:
 
@@ -919,7 +928,7 @@ structure ProvenSolutionSet where
 ```
 
 The trailing `True` makes construction uniform even for zero original
-arguments. `Presentation` removes it before returning control to the user.
+arguments. `Exposure` removes it before returning control to the user.
 
 `Certificate.solutionSetType` disjoins all branch propositions. An empty
 array becomes `False`.
@@ -950,7 +959,7 @@ branch by branch without forcing one large biconditional theorem.
 
 After the user proves completeness, `runWith` specializes it to the actual
 arguments and equality extracted from `h`. That produces the local
-`ProvenSolutionSet` consumed by `Presentation`. Thus the local factorization
+`ProvenSolutionSet` consumed by `Exposure`. Thus the local factorization
 proof is a consequence of a stronger, hypothesis-independent certificate.
 
 #### Boundary of `Unification.Certificate`
@@ -960,8 +969,8 @@ proof is a consequence of a stronger, hypothesis-independent certificate.
   factorization packages.
 - **Depends on:** only original argument order and ordinary Lean equality,
   existential, conjunction, and disjunction.
-- **Does not know:** how alternatives were computed, what axioms were used,
-  or whether the consumer is `Presentation` or `Narrowing`.
+- **Does not know:** how alternatives were computed, what operator laws were used,
+  or whether the consumer is `Exposure` or `Narrowing`.
 
 ### 3.5 Leaf backend: `Unification.Free`
 
@@ -1056,7 +1065,7 @@ prove by any method.
 
 ### 3.6 Leaf backend: `Unification.C`
 
-The C backend demonstrates that the certificate and presentation interfaces
+The C backend demonstrates that the certificate and exposure interfaces
 can support several alternatives without changing user proofs.
 
 #### 3.6.1 Why commutativity needs more than `f_comm`
@@ -1106,7 +1115,7 @@ b ↦ u2                        b ↦ u1
 
 The common `SolutionSet` holds two `Alternative` values.
 
-#### 3.6.3 C soundness, completeness, and presentation
+#### 3.6.3 C soundness, completeness, and exposure
 
 There is no C-specific `certify` callback. The same generic
 `Tactic.proveSoundness` used for free candidates checks both direct and swapped
@@ -1119,11 +1128,11 @@ first goal. In the prototype, `unify_complete` proves it using
 `C.Operator.eq_iff`, `simp_all`, and `grind`; a user or future certificate
 checker may replace that tactic.
 
-`Presentation.expose` then splits the disjunction, giving the user two goals:
+`Exposure.expose` then splits the disjunction, giving the user two goals:
 
 ```lean
-example (h : pairLeft ⋈[Module1] pairRight) : True := by
-  unify h in Module1
+example (h : pairLeft ⋈[Theory1] pairRight) : True := by
+  unify h in Theory1
   · -- completeness of the direct-or-swapped result
     unify_complete
   · -- direct branch with u1, u2, h1, ..., h4
@@ -1135,12 +1144,12 @@ example (h : pairLeft ⋈[Module1] pairRight) : True := by
 The public shape is identical to free unification; only the number and
 contents of branches differ.
 
-### 3.7 Return path: `Unification.Presentation`
+### 3.7 Return path: `Unification.Exposure`
 
-`Presentation.expose` is the final axiom-independent layer.
+`Exposure.expose` is the final theory-independent layer.
 
 After generic orchestration has specialized the user-supplied completeness
-proof to `h`, `Presentation.expose` receives a local factorization
+proof to `h`, `Exposure.expose` receives a local factorization
 disjunction. For each alternative it:
 
 1. adds the certified factorization proof to the goal;
@@ -1153,7 +1162,7 @@ For multiple alternatives, `exposeAlternativesAt` recursively cases on the
 certified disjunction. For an empty result, `expose` notes the certified
 `False` proof and closes the original goal by contradiction.
 
-#### Boundary of `Unification.Presentation`
+#### Boundary of `Unification.Exposure`
 
 - **Receives:** `Certificate.ProvenSolutionSet`.
 - **Returns:** zero, one, or several ordinary Lean goals.
@@ -1163,35 +1172,35 @@ certified disjunction. For an empty result, `expose` notes the certified
 
 ---
 
-## 4. Equational modules and backend dispatch
+## 4. Theories and backend dispatch
 
 ### 4.1 Uniform symbol declarations
 
-`framework.Symbol` packages an operation existentially with its Lean type:
+`Theory.Symbol` packages an operation existentially with its Lean type:
 
 ```lean
 structure Symbol where
   {operationType : Type u}
   operation : operationType
-  axioms : List (Axiom operation) := []
+  laws : List (OperatorLaw operation) := []
 ```
 
 Its uniform constructor is:
 
 ```lean
-Symbol.declare operation axioms
+Theory.Symbol.declare operation laws
 ```
 
-No arity is special at the symbol-registration layer. A single module can
+No arity is special at the symbol-registration layer. A single theory can
 contain:
 
 ```lean
-def MixedArityFree : framework.EqModule where
+def MixedArityFree : Theory where
   symbols := [
-    framework.Symbol.declare zeroSymbol,    -- Nat
-    framework.Symbol.declare increment,     -- Nat → Nat
-    framework.Symbol.declare firstOfThree,  -- Nat → Nat → Nat → Nat
-    framework.Symbol.declare select         -- Nat → Bool → Nat
+    Theory.Symbol.declare zeroSymbol,    -- Nat
+    Theory.Symbol.declare increment,     -- Nat → Nat
+    Theory.Symbol.declare firstOfThree,  -- Nat → Nat → Nat → Nat
+    Theory.Symbol.declare select         -- Nat → Bool → Nat
   ]
 ```
 
@@ -1199,22 +1208,28 @@ Lean infers each complete signature from the operation. The list is
 heterogeneous because every `Symbol` existentially packages its own
 `operationType`.
 
-### 4.2 Axioms are dependent on their operation
+### 4.2 Operator laws are dependent on their operation
 
-`framework.Axiom` is indexed by the exact operation:
+`Theory.OperatorLaw` is indexed by the exact operation:
 
 ```lean
-inductive Axiom : {operationType : Type u} →
+inductive OperatorLaw : {operationType : Type u} →
     (operation : operationType) → Type (u + 1) where
-  | commutative ... : Axiom operation
-  | associative ... : Axiom operation
+  | commutative ... : OperatorLaw operation
+  | associative ... : OperatorLaw operation
 ```
 
-The binary restriction belongs to these mathematical schemas, not to
+`OperatorLaw` is intentionally narrower than a general logical “axiom.” Its
+constructors record structural laws used to classify a symbol as free, A, C,
+AC, and eventually variants with units. The classification is derived from a
+list of primitive laws; `free` is the absence of registered laws, not itself a
+law.
+
+The binary restriction belongs to these mathematical law schemas, not to
 `Symbol`. For example:
 
 ```lean
-framework.Symbol.declare f [.commutative f_comm]
+Theory.Symbol.declare f [.commutative f_comm]
 ```
 
 is accepted because `f` is binary and `f_comm` proves the required law about
@@ -1224,8 +1239,8 @@ list: Lean rejects it by dependent type checking.
 Known Lean operations can reuse existing theorems:
 
 ```lean
-def NatAC : framework.EqModule where
-  symbols := [framework.Symbol.declare Nat.add [
+def NatAC : Theory where
+  symbols := [Theory.Symbol.declare Nat.add [
     .associative Nat.add_assoc,
     .commutative Nat.add_comm
   ]]
@@ -1234,56 +1249,58 @@ def NatAC : framework.EqModule where
 This declaration elaborates, but the current tactic deliberately reports that
 the AC backend is not implemented if asked to use it.
 
-### 4.3 `EqModule`
+### 4.3 `Theory` is the main declarative concept
 
 ```lean
-structure EqModule where
-  symbols : List Symbol := []
+structure Theory where
+  symbols : List Theory.Symbol := []
 ```
 
-`EqModule` is framework data, not a member of `Unification`. Unification,
-narrowing, and future reachability procedures can all interpret the same
-equational component. A future full rewrite module can own an `EqModule`
+`Theory` is top-level data rather than part of `framework` or `Unification`.
+It describes equality independently of semantic pattern representations and
+independently of the algorithm chosen to reason modulo that equality.
+Unification, narrowing, rewriting, and future reachability procedures can all
+interpret the same theory. A future executable module can contain a `Theory`
 together with rules and other model declarations.
 
-An empty module selects free unification:
+An empty theory selects free unification:
 
 ```lean
-def FreePresentation : framework.EqModule := {}
+def FreeTheory : Theory := {}
 ```
 
 The explicit free proof has the same output as bare `unify`:
 
 ```lean
-example (h : pat1 ⋈[FreePresentation] pat2) : True := by
-  unify h in FreePresentation
+example (h : pat1 ⋈[FreeTheory] pat2) : True := by
+  unify h in FreeTheory
   ...
 ```
 
-### 4.4 `Unification.PresentationElaboration`
+### 4.4 `Unification.Dispatch`
 
-This namespace interprets `EqModule` only far enough to choose the current
+This namespace interprets a `Theory` only far enough to choose the current
 backend:
 
 ```text
-no registered axioms       → Free
+no registered laws         → Free
 at least one commutative   → C
 associative only           → explicit unsupported error
 associative + commutative  → explicit AC-unsupported error
 ```
 
 The dispatcher scans arbitrary-arity symbols uniformly. Only encountering an
-axiom constructor affects backend choice.
+`OperatorLaw` constructor affects backend choice.
 
-`Tactic.runIn` also checks that the module written after `in` is definitionally
-the same module appearing in `h : p ⋈[M] q`. This prevents accidentally
-proving a module-indexed hypothesis with a different presentation.
+`Tactic.runIn` also checks that the theory written after `in` is definitionally
+the same theory appearing in `h : p ⋈[T] q`. This prevents accidentally
+proving a theory-indexed hypothesis with a different theory.
 
-### 4.5 Current module/C duplication
+### 4.5 Current theory/C duplication
 
-The module interface is not yet the sole source of C information:
+The theory interface is not yet the sole source of C information:
 
-- `EqModule` and `.commutative f_comm` select the C backend;
+- `Theory` and `.commutative f_comm` select the C backend;
 - `C.Operator f` lets the C solver recognize `f` in a term; and
 - `C.Operator.eq_iff` supplies free-C decomposition to the automatic
   soundness check and optional completeness automation.
@@ -1295,23 +1312,23 @@ instance : Unification.C.Operator f where
   comm := f_comm
   eq_iff := f_eq_iff
 
-noncomputable def Module1 : framework.EqModule where
-  symbols := [framework.Symbol.declare f [.commutative f_comm]]
+noncomputable def Theory1 : Theory where
+  symbols := [Theory.Symbol.declare f [.commutative f_comm]]
 ```
 
 This duplication is a known prototype limitation, not the intended final
 contract. A future implementation should reify symbol declarations from the
-selected module and derive backend recognition and proof replay from
-module-owned information.
+selected theory and derive backend recognition and proof replay from
+theory-owned information.
 
 In particular, C-operation discovery is currently global typeclass synthesis,
-not a lookup restricted to the selected `EqModule`. Once any commutative axiom
-causes module dispatch to choose C, the C backend recognizes every operation
+not a lookup restricted to the selected `Theory`. Once any commutative law
+causes theory dispatch to choose C, the C backend recognizes every operation
 having a visible `C.Operator` instance. The examples keep those registrations
-aligned, but the framework does not yet enforce that alignment.
+aligned, but the prototype does not yet enforce that alignment.
 
 Another current simplification is that dispatch chooses one backend for the
-whole module. A general Ax-unifier will need per-symbol axioms inside one
+whole theory. A general Ax-unifier will need per-symbol laws inside one
 reified problem rather than the present coarse `free`/`c` choice.
 
 ---
@@ -1372,7 +1389,7 @@ For running example N this is `[payload, next, n]`.
 #### Boundary of `Narrowing.Problem`
 
 - **Receives:** one closure returning `RuleBody` and one returning
-  `PatternBody`.
+  `APattBody`.
 - **Returns:** projected rule/source data plus `Unification.Problem.Input`.
 - **Depends on:** the common closure-saturation frontend.
 - **Does not know:** how MGUs will be computed or how the post is represented.
@@ -1412,7 +1429,7 @@ For each `Certificate.Alternative`, `Materialization.successor`:
 8. constructs a closure returning:
 
 ```lean
-PatternBody.mk substitutedRhs
+APattBody.mk substitutedRhs
   (substitutedSourceCondition ∧ substitutedRuleCondition).
 ```
 
@@ -1544,7 +1561,7 @@ Unification.Tactic.runWith
 ├── Tactic.exposeSemantics
 ├── specialize completeness to the equality from h
 │   └── Certificate.ExactSolutionSet / ProvenSolutionSet
-└── Unification.Presentation.expose
+└── Unification.Exposure.expose
     └── Unification.Certificate factorization structure
 ```
 
@@ -1568,21 +1585,22 @@ mapsInto_via_narrowing
 
 | Component | Input | Output | Replaceable without changing users? |
 |---|---|---|---|
-| `framework.Patterns.AtPattern` | user representation | set-of-states semantics | yes, per representation |
+| `framework.Patterns.APatt` | user representation | set-of-states semantics | yes, per representation |
 | `framework.Rules.AtRule` | user rule representation | transition-relation semantics | yes, per representation |
+| `Theory` | symbols plus structural laws | declarative equality theory | stable shared input |
 | `Unification.Unifiable` | two atomic patterns | semantic-intersection proposition | stable semantic boundary |
 | `Unification.Problem` | `p ⋈ q` hypothesis type | saturated equation | normally stable |
-| `PresentationElaboration` | `EqModule` | backend tag | yes |
+| `Unification.Dispatch` | `Theory` | backend tag | yes |
 | `Free.solve` | saturated equation | private free candidates | yes |
 | `C.solve` | saturated equation | private C candidates | yes |
 | `Certificate` | basis and images | canonical solution-set language | intended stable boundary |
 | `proveSoundness` | candidate solution set | per-branch universal proofs | proof procedure replaceable |
 | completeness boundary | candidate solution set | ordinary user theorem goal | yes; intended oracle/certificate seam |
 | `unify_complete` | completeness goal | proof when current automation succeeds | optional and replaceable |
-| `Presentation.expose` | proven solution set | user locals/goals | intended stable public interface |
+| `Exposure.expose` | proven solution set | user locals/goals | intended stable public interface |
 | `Narrowing.Backend` | LHS/source equation | raw solution set | yes; current Ax extension point |
-| `Materialization` | solution set plus rule/source | constrained post | intended axiom-neutral |
-| narrowing certification | candidate post | exact-image proof | axiom-specific and replaceable |
+| `Materialization` | solution set plus rule/source | constrained post | intended theory-neutral |
+| narrowing certification | candidate post | exact-image proof | theory-specific and replaceable |
 | `Subsumption` | `post ⊑ target` | proof | yes |
 
 ### 6.4 What an AC or external backend must provide
@@ -1626,7 +1644,7 @@ specialization used to present one concrete `h`.
 An external oracle may compute candidates and perhaps emit a completeness
 certificate, but Lean must check the candidate soundness and elaborate or
 verify the completeness proof. The user can discharge that generated goal by
-an oracle-specific checker without changing `runWith`, `Presentation.expose`,
+an oracle-specific checker without changing `runWith`, `Exposure.expose`,
 or the subsequent result-branch scripts.
 
 For narrowing, the backend must additionally allow
@@ -1647,7 +1665,7 @@ Ultimately trusted:
 - Lean's kernel;
 - the semantic definitions in `framework.Patterns`, `framework.Rules`, and
   `Unification`; and
-- explicit user axioms such as `f_comm` and `f_eq_iff`, when the example
+- explicit user assumptions such as `f_comm` and `f_eq_iff`, when the example
   chooses to assume them.
 
 ### 7.2 Untrusted or rechecked computation
@@ -1723,20 +1741,20 @@ It currently requires:
 - optional completeness automation by `simp_all [Operator.eq_iff]` and
   `grind`.
 
-### 8.3 Equational modules
+### 8.3 Theories
 
-`EqModule` already supports:
+`Theory` already supports:
 
 - multiple symbols;
 - different arities and argument sorts;
-- operation-indexed axiom proofs; and
+- operation-indexed structural-law proofs; and
 - free, associative, and commutative declarations at the data level.
 
 Current dispatch does **not** yet support:
 
 - a genuine mixed per-symbol Ax problem;
 - A, AC, ACU, CU, or other algorithms;
-- obtaining all C proof data solely from `EqModule`; or
+- obtaining all C proof data solely from `Theory`; or
 - a full rewrite module containing rules and a distinguished state sort.
 
 ### 8.4 Narrowing
@@ -1787,7 +1805,7 @@ h : pat1 ⋈ pat2
 ├── specialize completeness to h's witnesses
 │   └── proof of ∃u1, x1 = f u1 c ∧ x2 = c ∧ y1 = u1 ∧ True
 │
-└── Presentation.expose
+└── Exposure.expose
     ├── u1 : Conf
     ├── h1 : x1 = f u1 c
     ├── h2 : x2 = c
@@ -1830,9 +1848,9 @@ document and avoids beginning in low-level metaprogramming:
 5. `Unification.Problem` and `Tactic.exposeSemantics`;
 6. `Unification.Free.solve`, `Tactic.proveSoundness`, and
    `Tactic.completenessType`;
-7. `Unification.Presentation.expose`;
-8. `framework.Axiom`, `Symbol`, `EqModule`, and
-   `PresentationElaboration`;
+7. `Unification.Exposure.expose`;
+8. `Theory`, `Theory.OperatorLaw`, `Theory.Symbol`, and
+   `Unification.Dispatch`;
 9. `Unification.C` as the first multi-MGU extension; and
 10. `Narrowing.Problem`, `Materialization`, `Certification`, and
     `Subsumption`.
