@@ -1,64 +1,90 @@
 import Lean
 
 
+namespace Theory
+
+/-!
+# Equational theories
+
+A `Theory` is the declarative equality component shared by unification,
+narrowing, and rewriting. It records term-forming symbols and proof-carrying
+structural laws, but it does not choose an algorithm or contain rewrite rules.
+Those are responsibilities of clients and of a future executable module.
+-/
+
+universe u
+
+/--
+A structural algebraic law attached to the exact operation it describes.
+Indexing by the operation prevents registering a proof about one symbol as a
+law of another. Absence or combinations of laws are later classified as free,
+A, C, AC, and related unification fragments.
+-/
+inductive OperatorLaw : {operationType : Type u} →
+    (operation : operationType) → Type (u + 1) where
+  | commutative {α : Type u} {operation : α → α → α}
+      (proof : ∀ left right, operation left right = operation right left) :
+      OperatorLaw operation
+  | associative {α : Type u} {operation : α → α → α}
+      (proof : ∀ first second third,
+        operation (operation first second) third =
+          operation first (operation second third)) :
+      OperatorLaw operation
+
+namespace OperatorLaw
+
+/-!
+Convenience constructors in this namespace turn standard Lean algebraic
+instances into the proof-carrying laws stored by a theory.
+-/
+
+def commutativeOfInstance {α : Type u} (operation : α → α → α)
+    [Std.Commutative operation] : OperatorLaw operation :=
+  .commutative Std.Commutative.comm
+
+def associativeOfInstance {α : Type u} (operation : α → α → α)
+    [Std.Associative operation] : OperatorLaw operation :=
+  .associative Std.Associative.assoc
+
+end OperatorLaw
+
+/-- One symbol of any arity; its complete signature is its inferred Lean type. -/
+structure Symbol where
+  {operationType : Type u}
+  operation : operationType
+  laws : List (OperatorLaw operation) := []
+
+/-- Uniform declaration constructor for nullary through arbitrary-arity symbols. -/
+def Symbol.declare {operationType : Type u} (operation : operationType)
+    (laws : List (OperatorLaw operation) := []) : Symbol where
+  operation := operation
+  laws := laws
+
+end Theory
+
+universe theory_u
+
+/-- The symbol signature and structural equality laws of a theory. -/
+structure Theory where
+  symbols : List (Theory.Symbol.{theory_u}) := []
+
+
 namespace framework
+
+/-!
+# Semantic framework
+
+The framework supplies the denotational layer shared by all reasoning
+procedures: state types, pattern semantics, and rule semantics. It does not
+own equational theories or a particular unification algorithm.
+-/
 
 universe u v w x y
 
 -- α is the type of states
 class State (α : Type u) : Prop where
 
-/-!
-## Equational presentations
-
-These declarations belong to the framework rather than to unification.
-Unification, narrowing, and later reachability procedures are clients of the
-same presentation.
--/
-
-/--
-An equation schema indexed by the operation to which it belongs.  The index
-prevents, for example, attaching a proof about `f` to the declaration of `g`.
-Only the individual schema constructors impose an arity requirement.
--/
-inductive Axiom : {operationType : Type u} →
-    (operation : operationType) → Type (u + 1) where
-  | commutative {α : Type u} {operation : α → α → α}
-      (proof : ∀ left right, operation left right = operation right left) :
-      Axiom operation
-  | associative {α : Type u} {operation : α → α → α}
-      (proof : ∀ first second third,
-        operation (operation first second) third =
-          operation first (operation second third)) :
-      Axiom operation
-
-namespace Axiom
-
-def commutativeOfInstance {α : Type u} (operation : α → α → α)
-    [Std.Commutative operation] : Axiom operation :=
-  .commutative Std.Commutative.comm
-
-def associativeOfInstance {α : Type u} (operation : α → α → α)
-    [Std.Associative operation] : Axiom operation :=
-  .associative Std.Associative.assoc
-
-end Axiom
-
-/-- One symbol of any arity; its complete signature is its inferred Lean type. -/
-structure Symbol where
-  {operationType : Type u}
-  operation : operationType
-  axioms : List (Axiom operation) := []
-
-/-- Uniform declaration constructor for nullary through arbitrary-arity symbols. -/
-def Symbol.declare {operationType : Type u} (operation : operationType)
-    (axioms : List (Axiom operation) := []) : Symbol where
-  operation := operation
-  axioms := axioms
-
-/-- The equational component shared by unification and rewriting procedures. -/
-structure EqModule where
-  symbols : List (Symbol.{u}) := []
+namespace Patterns
 
 /-!
 ## Pattern semantics
@@ -67,41 +93,40 @@ All definitions whose primary purpose is to represent or compare patterns live
 under this namespace. They are exported from `framework` below to preserve the
 compact user-facing names used by existing models.
 -/
-namespace Patterns
 
+/- ### Atomic patterns -/
 -- P is a type of atomic patterns denoting sets of α-states.
-class AtPattern (α : outParam (Type u)) [State α] (P : Type v) where
+class APatt (α : outParam (Type u)) [State α] (P : Type v) where
   semantics : P → α → Prop
 
-instance {α : Type u} [State α] : AtPattern α (α × Prop) where
-  semantics p state := p.fst = state ∧ p.snd
-
--- A model value is an atomic pattern matching exactly that value.
-instance {α : Type u} [State α] : AtPattern α α where
+-- e.g., 42 : APatt
+instance {α : Type u} [State α] : APatt α α where
   semantics p state := p = state
 
 /-- The body returned by a constrained pattern closure. -/
-structure PatternBody (α : Type u) where
+structure APattBody (α : Type u) where
   term : α
   requires : Prop := True
 
-instance patternBodyAtPattern {α : Type u} [State α] :
-    AtPattern α (PatternBody α) where
+-- e.g., ⟨42, True⟩ : APatt
+instance {α : Type u} [State α] : APatt α (APattBody α) where
   semantics pattern state :=
     pattern.term = state ∧ pattern.requires
 
-instance functionAtPattern {α : Type u} {A : Type v} {P : Type w}
-    [State α] [AtPattern α P] : AtPattern α (A → P) where
-  semantics p state := ∃ x, AtPattern.semantics (p x) state
+-- e.g., λ x, ⟨x, True⟩ : APatt
+instance {α : Type u} {A : Type v} {P : Type w}
+    [State α] [APatt α P] : APatt α (A → P) where
+  semantics p state := ∃ x, APatt.semantics (p x) state
 
+/- ### General patterns (w/ Disjunctions) -/
 /-- Patterns are atomic patterns closed under finite disjunction. -/
 class Pattern (α : outParam (Type u)) [State α] (P : Type v) where
   semantics : P → α → Prop
 
 instance atomicPattern {α : Type u} {P : Type v}
-    [State α] [AtPattern α P] :
+    [State α] [APatt α P] :
     Pattern α P where
-  semantics := AtPattern.semantics
+  semantics := APatt.semantics
 
 /-- A heterogeneous disjunction of two pattern representations. -/
 structure Disjunction (P : Type v) (Q : Type w) where
@@ -121,8 +146,8 @@ instance disjunctionPattern {α : Type u} {P : Type v} {Q : Type w}
 inductive EmptyPattern (α : Type u) where
   | empty : EmptyPattern α
 
-instance emptyAtPattern {α : Type u} [State α] :
-    AtPattern α (EmptyPattern α) where
+instance emptyAPatt {α : Type u} [State α] :
+    APatt α (EmptyPattern α) where
   semantics _ _ := False
 
 /-- Semantic inclusion between two possibly different pattern representations. -/
@@ -136,13 +161,14 @@ infix:50 " ⊑ " => Subsumes
 
 end Patterns
 
+namespace Rules
+
 /-!
 ## Rule and one-step semantics
 
 Rule representations and all judgments that fundamentally mention a rule live
 under this namespace.
 -/
-namespace Rules
 
 open Patterns
 
@@ -249,7 +275,7 @@ end Rules
 
 -- Preserve the concise modelling API while keeping declaration ownership
 -- visible in the namespace tree.
-export Patterns (AtPattern PatternBody Pattern Disjunction EmptyPattern Subsumes)
+export Patterns (APatt APattBody Pattern Disjunction EmptyPattern Subsumes)
 export Rules (RuleBody AtRule postImage NarrowsTo mapsInto
   mapsInto_of_narrowsTo_of_subsumes mapsInto_via_narrowing
   mapsInto_iff_subsumes_of_narrowsTo)
@@ -266,38 +292,54 @@ open framework framework.Patterns
 
 namespace Unification
 
+/-!
+# Unification
+
+Unification begins with semantic intersection of two pattern denotations and
+computationally explains that intersection by a sound, complete set of
+factorizing substitutions. The namespace separates semantic judgments,
+solver-neutral certificates, theory-specific backends, and proof-state UI.
+-/
+
 universe u v w
 
 
 
 def Unifiable {α : Type u} {P : Type v} {Q : Type w}
-    [State α] [AtPattern α P] [AtPattern α Q]
+    [State α] [APatt α P] [APatt α Q]
     (p : P) (q : Q) : Prop :=
-  ∃ state, AtPattern.semantics p state ∧ AtPattern.semantics q state
+  ∃ state, APatt.semantics p state ∧ APatt.semantics q state
 
 infix:50 " ⋈ " => Unifiable
 
 /--
-Unifiability relative to an equational presentation. Its denotation remains
-semantic intersection; the presentation tells automation which equations it
-may use when constructing and certifying the intersection witness.
+Unifiability relative to an equational theory. Its denotation remains semantic
+intersection; the theory tells automation which structural laws it may use
+when constructing and certifying the intersection witness.
 -/
 def UnifiableIn {α : Type u} {P : Type v} {Q : Type w}
-    [State α] [AtPattern α P] [AtPattern α Q]
-    (_presentation : EqModule) (left : P) (right : Q) : Prop :=
+    [State α] [APatt α P] [APatt α Q]
+    (_theory : Theory) (left : P) (right : Q) : Prop :=
   Unifiable left right
 
-notation:50 left " ⋈[" presentation "] " right =>
-  UnifiableIn presentation left right
+notation:50 left " ⋈[" theory "] " right =>
+  UnifiableIn theory left right
 
 /-!
 The implementation is intentionally split into namespaces that can later
 become files.  `Problem` knows how to read Lean pattern closures, `Certificate`
 is the solver-neutral output format, `Free` is the native free-unification
-backend, and `Presentation` controls the user-visible proof context.
+backend, `Dispatch` selects a backend from a theory, and `Exposure` controls
+the user-visible proof context.
 -/
 
 namespace Problem
+
+/-!
+`Problem` converts semantic pattern closures into the stable first-order
+equation seen by every backend. It owns binder saturation and source argument
+order, but it does not solve or certify the equation.
+-/
 
 /-- A pattern closure saturated with fresh, pairwise distinct metavariables. -/
 structure SaturatedPattern where
@@ -307,7 +349,7 @@ structure SaturatedPattern where
 
 /-- The first-order equation sent to a unification backend. -/
 structure Input where
-  presentation? : Option Expr := none
+  theory? : Option Expr := none
   lhs : SaturatedPattern
   rhs : SaturatedPattern
 
@@ -330,23 +372,23 @@ def saturatePattern (pattern : Expr) : MetaM SaturatedPattern := do
     argumentNames
   }
 
-/-- Extract the optional presentation and two patterns from a unifiability proposition. -/
+/-- Extract the optional theory and two patterns from a unifiability proposition. -/
 def ofUnifiableType (type : Expr) : MetaM Input := do
   let type ← instantiateMVars type
   let arguments := type.getAppArgs
   let isDefault := type.getAppFn.isConstOf ``Unification.Unifiable
-  let isPresentationIndexed :=
+  let isTheoryIndexed :=
     type.getAppFn.isConstOf ``Unification.UnifiableIn
   unless (isDefault && arguments.size >= 2) ||
-      (isPresentationIndexed && arguments.size >= 3) do
+      (isTheoryIndexed && arguments.size >= 3) do
     throwError "expected a hypothesis of the form `p ⋈ q`"
   let lhs ← saturatePattern arguments[arguments.size - 2]!
   let rhs ← saturatePattern arguments[arguments.size - 1]!
-  let presentation? := if isPresentationIndexed then
+  let theory? := if isTheoryIndexed then
       some arguments[arguments.size - 3]!
     else
       none
-  return { presentation?, lhs, rhs }
+  return { theory?, lhs, rhs }
 
 def argumentCount (problem : Input) : Nat :=
   problem.lhs.arguments.size + problem.rhs.arguments.size
@@ -357,31 +399,37 @@ def symbolicArguments (problem : Input) : Array Expr :=
 end Problem
 
 
-namespace PresentationElaboration
+namespace Dispatch
+
+/-!
+`Dispatch` interprets a declarative `Theory` only far enough to choose a
+unification algorithm. It owns no symbols or laws: other reasoning procedures
+may interpret the same theory through their own dispatch layers.
+-/
 
 inductive Backend where
   | free
   | c
 
-/-- Read the axiom kinds attached to one declared symbol. -/
-private partial def scanAxioms (axioms : Expr)
+/-- Read the structural-law kinds attached to one declared symbol. -/
+private partial def scanLaws (laws : Expr)
     (foundAssociative foundCommutative : Bool) : MetaM (Bool × Bool) := do
-  let axioms ← withTransparency .all <| whnf axioms
-  let arguments := axioms.getAppArgs
-  if axioms.getAppFn.isConstOf ``List.nil then
+  let laws ← withTransparency .all <| whnf laws
+  let arguments := laws.getAppArgs
+  if laws.getAppFn.isConstOf ``List.nil then
     return (foundAssociative, foundCommutative)
-  unless axioms.getAppFn.isConstOf ``List.cons && arguments.size >= 3 do
-    throwError "could not reduce a symbol's axiom declarations"
-  let axiomExpr := arguments[arguments.size - 2]!
+  unless laws.getAppFn.isConstOf ``List.cons && arguments.size >= 3 do
+    throwError "could not reduce a symbol's structural-law declarations"
+  let lawExpr := arguments[arguments.size - 2]!
   let tail := arguments[arguments.size - 1]!
-  let axiomExpr ← withTransparency .all <| whnf axiomExpr
+  let lawExpr ← withTransparency .all <| whnf lawExpr
   let isAssociative :=
-    axiomExpr.getAppFn.isConstOf ``framework.Axiom.associative
+    lawExpr.getAppFn.isConstOf ``Theory.OperatorLaw.associative
   let isCommutative :=
-    axiomExpr.getAppFn.isConstOf ``framework.Axiom.commutative
+    lawExpr.getAppFn.isConstOf ``Theory.OperatorLaw.commutative
   unless isAssociative || isCommutative do
-    throwError "the presentation contains an unrecognized axiom kind"
-  scanAxioms tail (foundAssociative || isAssociative)
+    throwError "the theory contains an unrecognized structural law"
+  scanLaws tail (foundAssociative || isAssociative)
     (foundCommutative || isCommutative)
 
 /-- Select a prototype backend from an arbitrary-arity symbol list. -/
@@ -391,11 +439,11 @@ private partial def scanSymbols (symbols : Expr) (foundC : Bool) : MetaM Backend
   if symbols.getAppFn.isConstOf ``List.nil then
     return if foundC then .c else .free
   unless symbols.getAppFn.isConstOf ``List.cons && arguments.size >= 3 do
-    throwError "could not reduce the presentation's symbol declarations"
+    throwError "could not reduce the theory's symbol declarations"
   let symbol := arguments[arguments.size - 2]!
   let tail := arguments[arguments.size - 1]!
-  let axioms ← mkAppM ``framework.Symbol.axioms #[symbol]
-  let (hasAssociative, hasCommutative) ← scanAxioms axioms false false
+  let laws ← mkAppM ``Theory.Symbol.laws #[symbol]
+  let (hasAssociative, hasCommutative) ← scanLaws laws false false
   if hasAssociative && hasCommutative then
     throwError "the AC backend is not implemented in this prototype"
   if hasAssociative then
@@ -403,14 +451,20 @@ private partial def scanSymbols (symbols : Expr) (foundC : Bool) : MetaM Backend
   let foundC := foundC || hasCommutative
   scanSymbols tail foundC
 
-def backend (presentation : Expr) : MetaM Backend := do
-  let symbols ← mkAppM ``framework.EqModule.symbols #[presentation]
+def backend (theory : Expr) : MetaM Backend := do
+  let symbols ← mkAppM ``Theory.symbols #[theory]
   scanSymbols symbols false
 
-end PresentationElaboration
+end Dispatch
 
 
 namespace Certificate
+
+/-!
+`Certificate` is the solver-neutral contract between computation and proof.
+It represents residual freedom with explicit basis variables and separately
+records candidate data, soundness, completeness, and concrete factorization.
+-/
 
 /--
 A solver-neutral unifier branch.
@@ -437,7 +491,7 @@ structure SolutionSet where
 /--
 A computed solution set whose alternatives have each been checked to be
 actual unifiers.  Soundness is backend-independent data even when the tactic
-used to construct the proofs is axiom-specific.
+used to construct the proofs is theory-specific.
 -/
 structure SoundSolutionSet where
   solutionSet : SolutionSet
@@ -530,6 +584,12 @@ end Certificate
 
 namespace C
 
+/-!
+This portion of `C` defines the logical contract for an operation that is free
+modulo commutativity. It is model-supplied recognition/proof data, distinct
+from the orientation-enumerating C backend defined below.
+-/
+
 /--
 A binary operation that is free modulo commutativity.
 
@@ -546,6 +606,12 @@ end C
 
 
 namespace Free
+
+/-!
+`Free` is the native free first-order backend. It asks Lean's unifier for a
+candidate, abstracts residual metavariables into an explicit basis, and
+returns solver-neutral substitution images without proving completeness.
+-/
 
 /-- A free-backend candidate represented through the common alternative interface. -/
 structure Candidate where
@@ -795,7 +861,13 @@ def solve (problem : Problem.Input) : MetaM Output := do
 end C
 
 
-namespace Presentation
+namespace Exposure
+
+/-!
+`Exposure` is the proof-state view of a certified solution set. It introduces
+stable basis names and factorization equations for users; it is unrelated to
+the equational `Theory` that selected the solver.
+-/
 
 def freshVisibleIdent (ref : Syntax) (base : Name) : TacticM Ident := do
   let goal ← getMainGoal
@@ -909,10 +981,17 @@ def expose (proven : Certificate.ProvenSolutionSet) : TacticM Unit := do
         exposeAlternativesAt goal disjunctionId proven 0
       setGoals goals
 
-end Presentation
+end Exposure
 
 
 namespace Tactic
+
+/-!
+`Tactic` orchestrates the complete user command: parse the semantic problem,
+run a selected backend, check candidate soundness, emit completeness, and use
+`Exposure` to open the certified alternatives. It is the main replaceable
+frontend/backend boundary.
+-/
 
 private structure SemanticWitnesses where
   actualArguments : Array Expr
@@ -1038,9 +1117,9 @@ private def proveSoundness
 private def exposeSemantics
     (ref : Syntax) (h : Ident) (problem : Problem.Input) : TacticM
       SemanticWitnesses := do
-  let stateIdent ← Presentation.freshVisibleIdent ref `_unifyState
-  let lhsIdent ← Presentation.freshVisibleIdent ref `_unifyLhs
-  let rhsIdent ← Presentation.freshVisibleIdent ref `_unifyRhs
+  let stateIdent ← Exposure.freshVisibleIdent ref `_unifyState
+  let lhsIdent ← Exposure.freshVisibleIdent ref `_unifyLhs
+  let rhsIdent ← Exposure.freshVisibleIdent ref `_unifyRhs
   evalTactic (← `(tactic|
     rcases ($h:term) with
       ⟨$stateIdent:ident, $lhsIdent:ident, $rhsIdent:ident⟩))
@@ -1049,14 +1128,14 @@ private def exposeSemantics
   for i in [:problem.lhs.arguments.size] do
     let base := Problem.visibleName s!"x{i + 1}"
       problem.lhs.argumentNames[i]!
-    let argumentIdent ← Presentation.freshVisibleIdent ref base
+    let argumentIdent ← Exposure.freshVisibleIdent ref base
     evalTactic (← `(tactic|
       rcases ($lhsIdent:term) with ⟨$argumentIdent:ident, $lhsIdent:ident⟩))
     actualIdents := actualIdents.push argumentIdent
   for i in [:problem.rhs.arguments.size] do
     let base := Problem.visibleName s!"y{i + 1}"
       problem.rhs.argumentNames[i]!
-    let argumentIdent ← Presentation.freshVisibleIdent ref base
+    let argumentIdent ← Exposure.freshVisibleIdent ref base
     evalTactic (← `(tactic|
       rcases ($rhsIdent:term) with ⟨$argumentIdent:ident, $rhsIdent:ident⟩))
     actualIdents := actualIdents.push argumentIdent
@@ -1082,7 +1161,7 @@ private def exposeSemantics
       actualArguments.size
     -- Rebuild the equation from the saturated closures instead of reading its
     -- sides back from `proof`.  The latter may already have unfolded a
-    -- reducible registered operation while reducing `AtPattern.semantics`.
+    -- reducible registered operation while reducing `APatt.semantics`.
     let lhs ← C.exposeHead
       (instantiateSaturatedApplication problem.lhs lhsArguments)
     let rhs ← C.exposeHead
@@ -1165,7 +1244,7 @@ private def runWith {Output : Type}
     proposition
     proof
   }
-  Presentation.expose proven
+  Exposure.expose proven
   clearSemantics witnesses
   let resultGoals ← getGoals
   setGoals (completenessGoal :: resultGoals)
@@ -1187,29 +1266,29 @@ def runC (ref : Syntax) (h : Ident) : TacticM Unit :=
     ref h
 
 /--
-Resolve an explicit equational presentation from an indexed unifiability
-hypothesis and dispatch to the prototype backend selected by its axioms.
+Resolve an explicit equational theory from an indexed unifiability hypothesis
+and dispatch to the prototype backend selected by its structural laws.
 -/
-def runIn (ref : Syntax) (h : Ident) (presentationSyntax : TSyntax `term) :
+def runIn (ref : Syntax) (h : Ident) (theorySyntax : TSyntax `term) :
     TacticM Unit := do
   let hypothesisId ← getFVarId h
   let hypothesisType ← instantiateMVars (← hypothesisId.getType)
   let goal ← getMainGoal
   let problem ← goal.withContext do
     Problem.ofUnifiableType hypothesisType
-  let some declaredPresentation := problem.presentation?
-    | throwErrorAt h "`unify ... in ...` requires a hypothesis `p ⋈[M] q`"
-  let requestedPresentation ← goal.withContext do
-    Term.elabTerm presentationSyntax.raw
-      (some (← inferType declaredPresentation))
-  let presentationsMatch ← goal.withContext do
+  let some declaredTheory := problem.theory?
+    | throwErrorAt h "`unify ... in ...` requires a hypothesis `p ⋈[T] q`"
+  let requestedTheory ← goal.withContext do
+    Term.elabTerm theorySyntax.raw
+      (some (← inferType declaredTheory))
+  let theoriesMatch ← goal.withContext do
     withoutModifyingState
-      (isDefEq requestedPresentation declaredPresentation)
-  unless presentationsMatch do
-    throwErrorAt presentationSyntax
-      "the requested presentation does not match the presentation in the hypothesis"
+      (isDefEq requestedTheory declaredTheory)
+  unless theoriesMatch do
+    throwErrorAt theorySyntax
+      "the requested theory does not match the theory in the hypothesis"
   match ← goal.withContext do
-      PresentationElaboration.backend requestedPresentation with
+      Dispatch.backend requestedTheory with
   | .free => run ref h
   | .c => runC ref h
 
@@ -1218,10 +1297,16 @@ end Tactic
 
 namespace Completeness
 
+/-!
+`Completeness` provides optional automation for the ordinary proof obligation
+emitted by `unify`. It does not belong to a solver and may be replaced by a
+manual proof or a theory-specific certificate checker.
+-/
+
 /--
 Optional user-level automation for the completeness goal emitted by `unify`.
 The goal remains an ordinary proposition: users may replace this tactic with
-any manual, module-specific, or externally checked proof.
+any manual, theory-specific, or externally checked proof.
 -/
 def run : TacticM Unit := do
   evalTactic (← `(tactic| intros))
@@ -1257,9 +1342,9 @@ their soundness, and expose completeness followed by the result goals.
 elab "c_unify " h:ident : tactic =>
   Unification.Tactic.runC h.raw h
 
-/-- Unify using the equational presentation explicitly named by the user. -/
-elab "unify " h:ident " in " presentation:term : tactic =>
-  Unification.Tactic.runIn h.raw h presentation
+/-- Unify using the equational theory explicitly named by the user. -/
+elab "unify " h:ident " in " theory:term : tactic =>
+  Unification.Tactic.runIn h.raw h theory
 
 /-- Attempt to discharge the explicit completeness goal emitted by `unify`. -/
 elab "unify_complete" : tactic =>
@@ -1276,6 +1361,12 @@ rule RHS and both constraints.
 -/
 
 namespace Problem
+
+/-!
+`Narrowing.Problem` projects a rule closure and constrained source closure,
+saturates their shared variables once, and forms the structural equation
+`rule.lhs = source.term` consumed by unification.
+-/
 
 /-- A rule closure whose binders were saturated together exactly once. -/
 structure SaturatedRule where
@@ -1322,11 +1413,11 @@ def saturateSource (source : Expr) : MetaM SaturatedConstrainedPattern := do
     return {
       value := source
       closure
-      term := ← project ``framework.Patterns.PatternBody.term application
-      requires := ← project ``framework.Patterns.PatternBody.requires application
+      term := ← project ``framework.Patterns.APattBody.term application
+      requires := ← project ``framework.Patterns.APattBody.requires application
     }
   catch _ =>
-    throwError "`narrow` expects a closure returning `PatternBody`"
+    throwError "`narrow` expects a closure returning `APattBody`"
 
 /-- Form the backend problem `rule.lhs = source.term`. -/
 def ofTerms (rule source : Expr) : MetaM Input := do
@@ -1347,6 +1438,12 @@ end Problem
 
 
 namespace Goal
+
+/-!
+`Goal` recognizes the semantic goal shapes manipulated by narrowing-side
+automation. It extracts user objects without deciding how their propositions
+will be proved.
+-/
 
 /-- The two user objects encoded in a `Subsumes` target. -/
 structure SubsumptionInput where
@@ -1369,6 +1466,12 @@ end Goal
 
 namespace Backend
 
+/-!
+`Backend` is the narrow bridge from a narrowing problem to the common
+unification solution-set format. Theory-specific dispatch can later replace
+this free-only bridge without affecting successor construction.
+-/
+
 /--
 The current backend bridge.  Backend-private evidence is erased here; all
 later narrowing phases consume only the common solver-neutral solution set.
@@ -1381,6 +1484,12 @@ end Backend
 
 
 namespace Materialization
+
+/-!
+`Materialization` turns each substitution alternative into a constrained
+successor by applying it to the rule RHS and both conditions, then combines
+all successors into the generated post pattern.
+-/
 
 /-- A generated post together with its concrete (possibly heterogeneous) type. -/
 structure Post where
@@ -1421,7 +1530,7 @@ private def projections (problem : Problem.Input)
   let ruleRequires ← withTransparency .all <|
     whnf (← mkAppM ``framework.Rules.RuleBody.requires #[ruleValue])
   let sourceRequires ← withTransparency .all <|
-    whnf (← mkAppM ``framework.Patterns.PatternBody.requires #[sourceValue])
+    whnf (← mkAppM ``framework.Patterns.APattBody.requires #[sourceValue])
   return (rhs, sourceRequires, ruleRequires)
 
 /-- Turn one backend alternative into its constrained successor closure. -/
@@ -1431,7 +1540,7 @@ def successor (problem : Problem.Input)
     let (rhs, sourceRequires, ruleRequires) ←
       projections problem alternative basis
     let requires ← mkAppM ``And #[sourceRequires, ruleRequires]
-    let body ← mkAppM ``framework.Patterns.PatternBody.mk #[rhs, requires]
+    let body ← mkAppM ``framework.Patterns.APattBody.mk #[rhs, requires]
     mkLambdaFVars basis body
 
 private def empty (problem : Problem.Input) : MetaM Expr := do
@@ -1465,6 +1574,12 @@ end Materialization
 
 namespace Closure
 
+/-!
+`Closure` discovers which user definitions should be unfolded while replaying
+semantic proofs. It is proof-support machinery and does not participate in
+unification or successor computation.
+-/
+
 /--
 Find the definition, if any, that directly supplies a rule or pattern closure.
 For example, both `advance` and `fun x y => advance x y` select `advance`.
@@ -1496,6 +1611,12 @@ end Closure
 
 namespace Certification
 
+/-!
+`Certification` proves that a materialized post is exactly the semantic
+one-step image. This obligation is separate from structural unifier
+certification because it also accounts for rule RHSs and constraints.
+-/
+
 /--
 Certify that the materialized post is the complete one-step image.  This
 prototype replays free constructor reasoning with `simp` and `grind`; an AC
@@ -1505,7 +1626,7 @@ def prove (ref : Syntax) (rule source : Expr)
     (ruleSyntax sourceSyntax : TSyntax `term) (postIdent : Ident) :
     TacticM Ident := do
   let narrowingIdent ←
-    Unification.Presentation.freshVisibleIdent ref `narrowing
+    Unification.Exposure.freshVisibleIdent ref `narrowing
   let unfoldNames ← Closure.unfoldingDefinitions #[rule, source]
   let unfoldSimps ← unfoldNames.mapM fun name =>
     `(Parser.Tactic.simpLemma| $(mkIdent name):ident)
@@ -1516,7 +1637,7 @@ def prove (ref : Syntax) (rule source : Expr)
             $ruleSyntax $sourceSyntax ($postIdent:term) := by
         simp [framework.Rules.NarrowsTo, framework.Rules.postImage,
           framework.Patterns.Pattern.semantics,
-          framework.Patterns.AtPattern.semantics,
+          framework.Patterns.APatt.semantics,
           framework.Rules.AtRule.semantics,
           $postIdent:term, $unfoldSimps,*] <;>
           grind))
@@ -1528,6 +1649,12 @@ end Certification
 
 
 namespace Tactic
+
+/-!
+`Narrowing.Tactic` connects post computation to the existential decomposition
+created by `mapsInto_via_narrowing`. It binds the generated `post` and leaves
+only semantic subsumption to the surrounding proof.
+-/
 
 private def ensureDecompositionGoal (goal : MVarId) : MetaM Unit := do
   let type ← whnf (← goal.getType)
@@ -1572,6 +1699,12 @@ end Tactic
 
 namespace Subsumption
 
+/-!
+`Subsumption` is the current lightweight prover for the residual inclusion
+between the generated post and the user's target pattern. Its semantic goal
+is stable even if stronger constraint automation replaces this prototype.
+-/
+
 /-- Simplify and prove the residual semantic inclusion between patterns. -/
 def run : TacticM Unit := do
   let goal ← getMainGoal
@@ -1583,7 +1716,7 @@ def run : TacticM Unit := do
   evalTactic (← `(tactic|
     simp [framework.Patterns.Subsumes,
       framework.Patterns.Pattern.semantics,
-      framework.Patterns.AtPattern.semantics,
+      framework.Patterns.APatt.semantics,
       $unfoldSimps,*] <;>
       grind))
 
@@ -1599,7 +1732,22 @@ elab "narrow " rule:term " against " source:term : tactic =>
 elab "subsume" : tactic =>
   Narrowing.Subsumption.run
 
+
+
+
+
+
+
+
+
+
 namespace examples
+
+/-!
+These user-level examples exercise free unification independently of rules.
+They deliberately appear after all tactic code so the implementation cannot
+depend on their particular model, patterns, or names.
+-/
 
 open framework
 
@@ -1612,8 +1760,8 @@ inductive Conf where
 
 instance : State Conf := ⟨⟩
 
-/-- An empty presentation: every symbol is free. -/
-def FreePresentation : framework.EqModule := {}
+/-- An empty theory: every symbol is free. -/
+def FreeTheory : Theory := {}
 
 open Conf
 
@@ -1650,9 +1798,9 @@ example (h : pat1 ⋈ pat2) : True := by
     guard_hyp h3 : y1 = u1
     exact True.intro
 
--- The explicit-presentation form has the same public result interface.
-example (h : pat1 ⋈[FreePresentation] pat2) : True := by
-  unify h in FreePresentation
+-- The explicit-theory form has the same public result interface.
+example (h : pat1 ⋈[FreeTheory] pat2) : True := by
+  unify h in FreeTheory
   · unify_complete
   · guard_hyp u1 : Conf
     guard_hyp h1 : x1 = f u1 c
@@ -1755,6 +1903,12 @@ end examples
 
 namespace narrowing_examples
 
+/-!
+These examples define an independent user model, constrained patterns, and
+rules to demonstrate exact one-step post generation followed by subsumption.
+They are clients of both the semantic framework and unification result format.
+-/
+
 open framework
 
 /-!
@@ -1771,12 +1925,12 @@ instance : State Conf := ⟨⟩
 open Conf
 
 /-- `pair (atom 0) (atom n) where n > 0` -/
-def source (n : Nat) : PatternBody Conf where
+def source (n : Nat) : APattBody Conf where
   term := pair (atom 0) (atom n)
   requires := 0 < n
 
 /-- `pair (atom payload) (atom (payload + 1))` where `payload > 0` -/
-def target (payload : Nat) : PatternBody Conf where
+def target (payload : Nat) : APattBody Conf where
   term := pair (atom payload) (atom (payload + 1))
   requires := 0 < payload
 
@@ -1842,7 +1996,18 @@ example : constrainedOut ⊢ source ↪ target := by
 end narrowing_examples
 
 
+
+
+
+
+
 namespace c_unification_examples
+
+/-!
+These examples provide a user-defined free-commutative operation and a theory
+that registers its structural law. They demonstrate multi-MGU exposure through
+the same interface as free unification.
+-/
 
 open framework
 
@@ -1878,12 +2043,12 @@ instance : Unification.C.Operator f where
   eq_iff := f_eq_iff
 
 /-!
-`Module1` registers `f` with the same declaration function used for every arity.
-Only the commutative axiom is binary-specific.  The ordinary constructor `g`
+`Theory1` registers `f` with the same declaration function used for every arity.
+Only the commutative law is binary-specific. The ordinary constructor `g`
 is absent and is therefore free.
 -/
-noncomputable def Module1 : framework.EqModule where
-  symbols := [framework.Symbol.declare f [
+noncomputable def Theory1 : Theory where
+  symbols := [Theory.Symbol.declare f [
     .commutative f_comm
   ]]
 
@@ -1891,12 +2056,12 @@ noncomputable def combineThree (first second third : Conf) : Conf :=
   Conf.g (Conf.g first second) third
 
 /-- One uniform list containing unary, free binary, C, and ternary symbols. -/
-noncomputable def MixedA : framework.EqModule where
+noncomputable def MixedTheory : Theory where
   symbols := [
-    framework.Symbol.declare Conf.atom,
-    framework.Symbol.declare Conf.g,
-    framework.Symbol.declare f [.commutative f_comm],
-    framework.Symbol.declare combineThree
+    Theory.Symbol.declare Conf.atom,
+    Theory.Symbol.declare Conf.g,
+    Theory.Symbol.declare f [.commutative f_comm],
+    Theory.Symbol.declare combineThree
   ]
 
 -- The same registration is visible to standard Lean tooling.
@@ -1912,8 +2077,8 @@ noncomputable def pairRight (a b : Conf) : Conf := f a b
 -- There are two MGUs: the direct pairing and the swapped pairing.  Each is
 -- exposed through exactly the same basis-variable/equation interface as the
 -- free `unify` tactic, so this proof receives two goals.
-example (h : pairLeft ⋈[Module1] pairRight) : True := by
-  unify h in Module1
+example (h : pairLeft ⋈[Theory1] pairRight) : True := by
+  unify h in Theory1
   · unify_complete
   · guard_hyp u1 : Conf
     guard_hyp u2 : Conf
@@ -1931,9 +2096,9 @@ example (h : pairLeft ⋈[Module1] pairRight) : True := by
     exact True.intro
 
 -- The same C dispatch works when unrelated symbols of other arities share the
--- presentation.  Registration does not partition symbols by arity.
-example (h : pairLeft ⋈[MixedA] pairRight) : True := by
-  unify h in MixedA
+-- theory. Registration does not partition symbols by arity.
+example (h : pairLeft ⋈[MixedTheory] pairRight) : True := by
+  unify h in MixedTheory
   · unify_complete
   all_goals exact True.intro
 
@@ -1941,9 +2106,9 @@ example (h : pairLeft ⋈[MixedA] pairRight) : True := by
 -- occurrences yields a finite complete set, and every MGU becomes one goal.
 example
     (h :
-      (fun x y z : Conf => f (f x y) z) ⋈[Module1]
+      (fun x y z : Conf => f (f x y) z) ⋈[Theory1]
       (fun a b c : Conf => f c (f a b))) : True := by
-  unify h in Module1
+  unify h in Theory1
   · unify_complete
   all_goals exact True.intro
 
@@ -1957,14 +2122,20 @@ def blue : Conf := atom 1
 @[simp] theorem red_ne_blue : red ≠ blue := by
   simp [red, blue]
 
-example (h : (f red red : Conf) ⋈[Module1] f red blue) : False := by
-  unify h in Module1
+example (h : (f red red : Conf) ⋈[Theory1] f red blue) : False := by
+  unify h in Theory1
   unify_complete
 
 end c_unification_examples
 
 
-namespace module_examples
+namespace theory_examples
+
+/-!
+These declarations demonstrate that theories register symbols uniformly
+across arities and sorts. They exercise only the declarative theory interface,
+not a particular user model or unification proof.
+-/
 
 /-- Representative operations of several arities and sorts. -/
 def zeroSymbol : Nat := 0
@@ -1977,21 +2148,21 @@ def select (value : Nat) (enabled : Bool) : Nat :=
 All arities use the same declaration function.  `select` also demonstrates
 that argument sorts need not be homogeneous.
 -/
-def MixedArityFree : framework.EqModule where
+def MixedArityFree : Theory where
   symbols := [
-    framework.Symbol.declare zeroSymbol,
-    framework.Symbol.declare increment,
-    framework.Symbol.declare firstOfThree,
-    framework.Symbol.declare select
+    Theory.Symbol.declare zeroSymbol,
+    Theory.Symbol.declare increment,
+    Theory.Symbol.declare firstOfThree,
+    Theory.Symbol.declare select
   ]
 
-/- `Nat.add` needs no new law proofs: its existing theorems populate the axiom
-list.  This declaration does not claim that AC is the full arithmetic theory;
-it selects the presentation used for unification. -/
-def NatAC : framework.EqModule where
-  symbols := [framework.Symbol.declare Nat.add [
+/- `Nat.add` needs no new law proofs: its existing theorems populate the
+operator-law list. This declaration does not claim that AC is the full
+arithmetic theory; it selects the theory used for unification. -/
+def NatAC : Theory where
+  symbols := [Theory.Symbol.declare Nat.add [
     .associative Nat.add_assoc,
     .commutative Nat.add_comm
   ]]
 
-end module_examples
+end theory_examples
