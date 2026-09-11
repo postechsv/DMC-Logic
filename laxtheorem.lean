@@ -537,102 +537,97 @@ The main theorem states global safety directly. Its proof bullets follow the
 computed graph, while each `lax_assume` records that the displayed outgoing
 edges at one state are complete.
 -/
--- TODO: eliminate recursive structure due to let ... : make it truely forward
--- make it tail-recursive?
--- maybe i may modify the completeness
--- e.g. s0 -> s1, s2
--- completeness: suffices to check modelcheck s1 and modelcheck s2
--- so parameterize the modelCheck by state
+
 -- TODO: what if it is general directed graph rather than tree?
 def modelCheck : ◯(SafeFrom s0) := by
-  have currentSafe : isSafe s0 := safeS0
+  have safeHere : isSafe s0 := safeS0
   lax_assume (∀ target, Step s0 target → target = s1 ∨ target = s2) as completeHere
 
   refine Lax.mono (α := SafeFrom s1 ∧ SafeFrom s2) (by
     rintro ⟨safeFromS1, safeFromS2⟩
-    apply allSafe_of_children currentSafe completeHere
+    apply allSafe_of_children safeHere completeHere
     intro child generated
     rcases generated with rfl | rfl
     · exact safeFromS1
     · exact safeFromS2) (Lax.strength ?_ ?_)
 
   · -- s1
-    have currentSafe : isSafe s1 := safeS1
+    have safeHere : isSafe s1 := safeS1
     lax_assume (∀ target, Step s1 target → target = s3) as completeHere
 
     refine Lax.mono (α := SafeFrom s3) (by
       intro safeFromS3
-      apply allSafe_of_children currentSafe completeHere
+      apply allSafe_of_children safeHere completeHere
       intro child generated
       rw [generated]
       exact safeFromS3) ?_
 
     · -- s3
-      have currentSafe : isSafe s3 := safeS3
+      have safeHere : isSafe s3 := safeS3
       lax_assume (∀ target, Step s3 target → target = s6) as completeHere
 
       refine Lax.mono (α := SafeFrom s6) (by
         intro safeFromS6
-        apply allSafe_of_children currentSafe completeHere
+        apply allSafe_of_children safeHere completeHere
         intro child generated
         rw [generated]
         exact safeFromS6) ?_
 
       · -- s6
-        have currentSafe : isSafe s6 := safeS6
+        have safeHere : isSafe s6 := safeS6
         lax_assume (∀ target, Step s6 target → False) as completeHere
         lax_return
-        apply allSafe_of_children currentSafe completeHere
+        apply allSafe_of_children safeHere completeHere
         intro child impossible
         exact False.elim impossible
 
   · -- s2
-    have currentSafe : isSafe s2 := safeS2
+    have safeHere : isSafe s2 := safeS2
     lax_assume (∀ target, Step s2 target → target = s4 ∨ target = s5) as completeHere
 
     refine Lax.mono (α := SafeFrom s4 ∧ SafeFrom s5) (by
       rintro ⟨safeFromS4, safeFromS5⟩
-      apply allSafe_of_children currentSafe completeHere
+      apply allSafe_of_children safeHere completeHere
       intro child generated
       rcases generated with rfl | rfl
       · exact safeFromS4
       · exact safeFromS5) (Lax.strength ?_ ?_)
 
     · -- s4
-      have currentSafe : isSafe s4 := safeS4
+      have safeHere : isSafe s4 := safeS4
       lax_assume (∀ target, Step s4 target → target = s7) as completeHere
 
       refine Lax.mono (α := SafeFrom s7) (by
         intro safeFromS7
-        apply allSafe_of_children currentSafe completeHere
+        apply allSafe_of_children safeHere completeHere
         intro child generated
         rw [generated]
         exact safeFromS7) ?_
 
       · -- s7
-        have currentSafe : isSafe s7 := safeS7
+        have safeHere : isSafe s7 := safeS7
         lax_assume (∀ target, Step s7 target → False) as completeHere
         lax_return
-        apply allSafe_of_children currentSafe completeHere
+        apply allSafe_of_children safeHere completeHere
         intro child impossible
         exact False.elim impossible
 
     · -- s5
-      have currentSafe : isSafe s5 := safeS5
+      have safeHere : isSafe s5 := safeS5
       lax_assume (∀ target, Step s5 target → target = s8) as completeHere
 
       refine Lax.mono (α := SafeFrom s8) (by
         intro safeFromS8
-        apply allSafe_of_children currentSafe completeHere
+        apply allSafe_of_children safeHere completeHere
         intro child generated
         rw [generated]
         exact safeFromS8) ?_
 
       · -- s8
-        have currentSafe : isSafe s8 := safeS8
+        have safeHere : isSafe s8 := safeS8
         lax_assume (∀ target, Step s8 target → False) as completeHere
         lax_return
-        apply allSafe_of_children currentSafe completeHere
+        apply allSafe_of_children safeHere completeHere
         intro child impossible
         exact False.elim impossible
 
@@ -661,6 +656,8 @@ theorem modelCheckCondition : modelCheck.condition := by
 /-- Eliminate `◯` only after the whole model-checking proof has been built. -/
 theorem certifiedModel : ∀ target, Reachable s0 target → isSafe target :=
   modelCheck.certify modelCheckCondition
+
+#reduce certifiedModel
 
 /-- Final global safety theorem for every state reachable from `s0`. -/
 theorem globalSafety {state : State} (reachable : Reachable s0 state) : isSafe state :=
