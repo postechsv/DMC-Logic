@@ -1,100 +1,30 @@
 import Lean
 
 
-namespace Theory
-
-/-!
-# Equational theories
-
-A `Theory` is the declarative equality component shared by unification,
-narrowing, and rewriting. It records term-forming symbols and proof-carrying
-structural laws, but it does not choose an algorithm or contain rewrite rules.
-Those are responsibilities of clients and of a future executable module.
--/
-
-universe u
-
-/--
-A structural algebraic law attached to the exact operation it describes.
-Indexing by the operation prevents registering a proof about one symbol as a
-law of another. Absence or combinations of laws are later classified as free,
-A, C, AC, and related unification fragments.
--/
-inductive OperatorLaw : {operationType : Type u} →
-    (operation : operationType) → Type (u + 1) where
-  | commutative {α : Type u} {operation : α → α → α}
-      (proof : ∀ left right, operation left right = operation right left) :
-      OperatorLaw operation
-  | associative {α : Type u} {operation : α → α → α}
-      (proof : ∀ first second third,
-        operation (operation first second) third =
-          operation first (operation second third)) :
-      OperatorLaw operation
-
-namespace OperatorLaw
-
-/-!
-Convenience constructors in this namespace turn standard Lean algebraic
-instances into the proof-carrying laws stored by a theory.
--/
-
-def commutativeOfInstance {α : Type u} (operation : α → α → α)
-    [Std.Commutative operation] : OperatorLaw operation :=
-  .commutative Std.Commutative.comm
-
-def associativeOfInstance {α : Type u} (operation : α → α → α)
-    [Std.Associative operation] : OperatorLaw operation :=
-  .associative Std.Associative.assoc
-
-end OperatorLaw
-
-/-- One symbol of any arity; its complete signature is its inferred Lean type. -/
-structure Symbol where
-  {operationType : Type u}
-  operation : operationType
-  laws : List (OperatorLaw operation) := []
-
-/-- Uniform declaration constructor for nullary through arbitrary-arity symbols. -/
-def Symbol.declare {operationType : Type u} (operation : operationType)
-    (laws : List (OperatorLaw operation) := []) : Symbol where
-  operation := operation
-  laws := laws
-
-end Theory
-
-universe theory_u
-
-/-- The symbol signature and structural equality laws of a theory. -/
-structure Theory where
-  symbols : List (Theory.Symbol.{theory_u}) := []
-
-
-namespace framework
-
-/-!
+/-
 # Semantic framework
 
 The framework supplies the denotational layer shared by all reasoning
 procedures: state types, pattern semantics, and rule semantics. It does not
 own equational theories or a particular unification algorithm.
 -/
+namespace framework
 
 universe u v w x y
 
 -- α is the type of states
 class State (α : Type u) : Prop where
 
-namespace Patterns
-
-/-!
+/-
 ## Patterns
 
 All definitions whose primary purpose is to represent or compare patterns live
 under this namespace. They are exported from `framework` below to preserve the
 compact user-facing names used by existing models.
 -/
+namespace Patterns
 
-/- ### Atomic Patterns -/
+/- ### Data Structure: Atomic Patterns -/
 -- P is a type of atomic patterns denoting sets of α-states.
 class APatt (α : outParam (Type u)) [State α] (P : Type v) where
   semantics : P → α → Prop -- read "P contains α"
@@ -117,7 +47,7 @@ instance {α : Type u} {A : Type v} {P : Type w}
     [State α] [APatt α P] : APatt α (A → P) where
   semantics p state := ∃ x, APatt.semantics (p x) state
 
-/- ### Composite Patterns (via Disjunction) -/
+/- ### Data Structure: Composite Patterns (via Disjunction) -/
 /-- Patterns are atomic patterns closed under finite disjunction. -/
 class Pattern (α : outParam (Type u)) [State α] (P : Type v) where
   semantics : P → α → Prop
@@ -152,7 +82,7 @@ instance {α : Type u} [State α] :
     APatt α (EmptyPattern α) where
   semantics _ _ := False
 
-/- ### Semantic definitions -/
+/- ### Derived Notions -/
 /-- Semantic inclusion between two possibly different pattern representations. -/
 def Subsumes {α : Type u} {P : Type v} {Q : Type w}
     [State α] [Pattern α P] [Pattern α Q]
@@ -164,38 +94,43 @@ infix:50 " ⊑ " => Subsumes
 
 end Patterns
 
-namespace Rules
 
-/-!
-## Rule and one-step semantics
+/-
+## Rules
 
 Rule representations and all judgments that fundamentally mention a rule live
 under this namespace.
 -/
+namespace Rules
 
 open Patterns
 
+/- ### Data Structure: Rules -/
 /-- The body returned by a constrained rewrite-rule closure. -/
 structure RuleBody (α : Type u) where
   lhs : α
   rhs : α
   requires : Prop := True
 
+-- TODO: rename it to just "Rule"
 -- Atomic rules and their Lean closures denote binary transition relations.
 class AtRule (α : outParam (Type u)) [State α] (R : Type v) where
   semantics : R → α → α → Prop
 
-instance ruleBodyAtRule {α : Type u} [State α] :
+-- case 1: unquantified ground rules
+instance {α : Type u} [State α] :
     AtRule α (RuleBody α) where
   semantics rule before after :=
     rule.lhs = before ∧ rule.rhs = after ∧ rule.requires
 
-instance functionAtRule {α : Type u} {A : Type v} {R : Type w}
+-- case 2: quantified rules
+instance {α : Type u} {A : Type v} {R : Type w}
     [State α] [AtRule α R] : AtRule α (A → R) where
   semantics rule before after :=
     ∃ argument, AtRule.semantics (rule argument) before after
 
-/-- The semantic one-step image of `source` under `rule`. -/
+/- ### Derived Notions -/
+/- used for defining narrowsTo -/
 def postImage {α : Type u} {P : Type v} {R : Type w}
     [State α] [Pattern α P] [AtRule α R]
     (rule : R) (source : P) (after : α) : Prop :=
@@ -203,14 +138,18 @@ def postImage {α : Type u} {P : Type v} {R : Type w}
     Pattern.semantics source before ∧
     AtRule.semantics rule before after
 
-/-- A generated pattern is the exact one-step image of a rule and source. -/
+-- TODO: NarrowsTo -> narrowsTo
+/- R ⊢ P ↝ Q iff ∀ q ∈ Q, ∃ p ∈ P, R p q -/
 def NarrowsTo {α : Type u} {P : Type v} {Post : Type w} {R : Type x}
     [State α] [Pattern α P] [Pattern α Post] [AtRule α R]
     (rule : R) (source : P) (post : Post) : Prop :=
   ∀ after,
     Pattern.semantics post after ↔ postImage rule source after
 
-/-- Every step of `rule` from a state denoted by `source` lands in `target`. -/
+notation:40 rule " ⊢ " source " ↝ " post =>
+  NarrowsTo rule source post
+
+/- R ⊢ P ↪ Q iff ∀ p,q ∈ α, p ∈ P → R p q → q ∈ Q -/
 def mapsInto {α : Type u} {P : Type v} {Q : Type w} {R : Type x}
     [State α] [Pattern α P] [Pattern α Q] [AtRule α R]
     (rule : R) (source : P) (target : Q) : Prop :=
@@ -219,12 +158,10 @@ def mapsInto {α : Type u} {P : Type v} {Q : Type w} {R : Type x}
     AtRule.semantics rule before after →
     Pattern.semantics target after
 
-notation:40 rule " ⊢ " source " ↝ " post =>
-  NarrowsTo rule source post
-
 notation:40 rule " ⊢ " source " ↪ " target =>
   mapsInto rule source target
 
+/- ### Useful Lemmas -/
 /-- Compose exact one-step narrowing with subsumption. -/
 theorem mapsInto_of_narrowsTo_of_subsumes
     {α : Type u} {P : Type v} {Post : Type w} {Q : Type x}
@@ -286,6 +223,72 @@ export Rules (RuleBody AtRule postImage NarrowsTo mapsInto
 end framework
 
 
+/-!
+# Equational theories
+
+A `Theory` is the declarative equality component shared by unification,
+narrowing, and rewriting. It records term-forming symbols and proof-carrying
+structural laws, but it does not choose an algorithm or contain rewrite rules.
+Those are responsibilities of clients and of a future executable module.
+-/
+namespace Theory
+
+universe u
+
+/--
+A structural algebraic law attached to the exact operation it describes.
+Indexing by the operation prevents registering a proof about one symbol as a
+law of another. Absence or combinations of laws are later classified as free,
+A, C, AC, and related unification fragments.
+-/
+inductive OperatorLaw : {operationType : Type u} →
+    (operation : operationType) → Type (u + 1) where
+  | commutative {α : Type u} {operation : α → α → α}
+      (proof : ∀ left right, operation left right = operation right left) :
+      OperatorLaw operation
+  | associative {α : Type u} {operation : α → α → α}
+      (proof : ∀ first second third,
+        operation (operation first second) third =
+          operation first (operation second third)) :
+      OperatorLaw operation
+
+namespace OperatorLaw
+
+/-!
+Convenience constructors in this namespace turn standard Lean algebraic
+instances into the proof-carrying laws stored by a theory.
+-/
+
+def commutativeOfInstance {α : Type u} (operation : α → α → α)
+    [Std.Commutative operation] : OperatorLaw operation :=
+  .commutative Std.Commutative.comm
+
+def associativeOfInstance {α : Type u} (operation : α → α → α)
+    [Std.Associative operation] : OperatorLaw operation :=
+  .associative Std.Associative.assoc
+
+end OperatorLaw
+
+/-- One symbol of any arity; its complete signature is its inferred Lean type. -/
+structure Symbol where
+  {operationType : Type u}
+  operation : operationType
+  laws : List (OperatorLaw operation) := []
+
+/-- Uniform declaration constructor for nullary through arbitrary-arity symbols. -/
+def Symbol.declare {operationType : Type u} (operation : operationType)
+    (laws : List (OperatorLaw operation) := []) : Symbol where
+  operation := operation
+  laws := laws
+
+end Theory
+
+universe theory_u
+
+/-- The symbol signature and structural equality laws of a theory. -/
+structure Theory where
+  symbols : List (Theory.Symbol.{theory_u}) := []
+
 
 
 
@@ -293,9 +296,7 @@ end framework
 open Lean Meta Elab Term Tactic
 open framework framework.Patterns
 
-namespace Unification
-
-/-!
+/-
 # Unification
 
 Unification begins with semantic intersection of two pattern denotations and
@@ -303,9 +304,9 @@ computationally explains that intersection by a sound, complete set of
 factorizing substitutions. The namespace separates semantic judgments,
 solver-neutral certificates, theory-specific backends, and proof-state UI.
 -/
+namespace Unification
 
 universe u v w
-
 
 
 def Unifiable {α : Type u} {P : Type v} {Q : Type w}
