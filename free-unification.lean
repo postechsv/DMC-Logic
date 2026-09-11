@@ -87,46 +87,40 @@ class State (α : Type u) : Prop where
 namespace Patterns
 
 /-!
-## Pattern semantics
+## Patterns
 
 All definitions whose primary purpose is to represent or compare patterns live
 under this namespace. They are exported from `framework` below to preserve the
 compact user-facing names used by existing models.
 -/
 
-/- ### Atomic patterns -/
+/- ### Atomic Patterns -/
 -- P is a type of atomic patterns denoting sets of α-states.
 class APatt (α : outParam (Type u)) [State α] (P : Type v) where
-  semantics : P → α → Prop
-
--- e.g., 42 : APatt
-instance {α : Type u} [State α] : APatt α α where
-  semantics p state := p = state
+  semantics : P → α → Prop -- read "P contains α"
 
 /-- The body returned by a constrained pattern closure. -/
 structure APattBody (α : Type u) where
-  term : α
-  requires : Prop := True
+  term : α -- TODO: require \a to be state
+  requires : Prop := True -- TODO: rename it to cond
 
--- e.g., ⟨42, True⟩ : APatt
+-- case 1: unconstrained ground terms (e.g., f(a,b) : APatt)
+instance {α : Type u} [State α] : APatt α α where
+  semantics p state := p = state
+
+-- case 2:  constrained ground terms (e.g., ⟨f(a,b), a>b⟩ : APatt)
 instance {α : Type u} [State α] : APatt α (APattBody α) where
-  semantics pattern state :=
-    pattern.term = state ∧ pattern.requires
+  semantics p state := p.term = state ∧ p.requires
 
--- e.g., λ x, ⟨x, True⟩ : APatt
+-- case 3) constrained terms w/ bound variables (e.g., λx.λy.⟨f(x,y), x>y⟩ : APatt)
 instance {α : Type u} {A : Type v} {P : Type w}
     [State α] [APatt α P] : APatt α (A → P) where
   semantics p state := ∃ x, APatt.semantics (p x) state
 
-/- ### General patterns (w/ Disjunctions) -/
+/- ### Composite Patterns (via Disjunction) -/
 /-- Patterns are atomic patterns closed under finite disjunction. -/
 class Pattern (α : outParam (Type u)) [State α] (P : Type v) where
   semantics : P → α → Prop
-
-instance atomicPattern {α : Type u} {P : Type v}
-    [State α] [APatt α P] :
-    Pattern α P where
-  semantics := APatt.semantics
 
 /-- A heterogeneous disjunction of two pattern representations. -/
 structure Disjunction (P : Type v) (Q : Type w) where
@@ -135,21 +129,30 @@ structure Disjunction (P : Type v) (Q : Type w) where
 
 infixr:65 " ⊔ " => framework.Patterns.Disjunction.mk
 
-instance disjunctionPattern {α : Type u} {P : Type v} {Q : Type w}
+/-- The empty pattern, used when narrowing returns no alternatives. -/
+inductive EmptyPattern (α : Type u) where
+  | empty : EmptyPattern α
+
+-- case 1: atomic patterns
+instance {α : Type u} {P : Type v}
+    [State α] [APatt α P] :
+    Pattern α P where
+  semantics := APatt.semantics
+
+-- case 2: disjuncted patterns
+instance {α : Type u} {P : Type v} {Q : Type w}
     [State α] [Pattern α P] [Pattern α Q] :
     Pattern α (Disjunction P Q) where
   semantics patterns state :=
     Pattern.semantics patterns.left state ∨
     Pattern.semantics patterns.right state
 
-/-- The empty pattern, used when narrowing returns no alternatives. -/
-inductive EmptyPattern (α : Type u) where
-  | empty : EmptyPattern α
-
-instance emptyAPatt {α : Type u} [State α] :
+-- case 3: empty patterns
+instance {α : Type u} [State α] :
     APatt α (EmptyPattern α) where
   semantics _ _ := False
 
+/- ### Semantic definitions -/
 /-- Semantic inclusion between two possibly different pattern representations. -/
 def Subsumes {α : Type u} {P : Type v} {Q : Type w}
     [State α] [Pattern α P] [Pattern α Q]
