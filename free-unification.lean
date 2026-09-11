@@ -1430,6 +1430,8 @@ elab "unify_complete" : tactic =>
 end Unification
 
 
+
+
 namespace ex_unification
 
 open ex_framework
@@ -1570,6 +1572,10 @@ example
 
 
 end ex_unification
+
+
+
+
 
 
 /-
@@ -1951,14 +1957,6 @@ elab "subsume" : tactic =>
   Narrowing.Subsumption.run
 
 end Narrowing
-
-
-
-
-
-
-
-
 
 
 
