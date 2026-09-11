@@ -162,7 +162,12 @@ notation:40 rule " ⊢ " source " ↪ " target =>
   mapsInto rule source target
 
 /- ### Useful Lemmas -/
-/-- Compose exact one-step narrowing with subsumption. -/
+/-
+  rule ⊢ source ↝ post
+  post ⊑ target
+  ────────────────────
+  rule ⊢ source ↪ target
+-/
 theorem mapsInto_of_narrowsTo_of_subsumes
     {α : Type u} {P : Type v} {Post : Type w} {Q : Type x}
     {R : Type y} [State α] [Pattern α P] [Pattern α Post]
@@ -179,6 +184,11 @@ theorem mapsInto_of_narrowsTo_of_subsumes
 Prove `mapsInto` through an existentially generated post.  The post
 representation itself is existential because a heterogeneous disjunction's
 concrete Lean type is not known before narrowing.
+  (∃ Post, ∃ postPattern, ∃ post)
+  rule ⊢ source ↝ post
+  post ⊑ target
+  ─────────────────────────────
+  rule ⊢ source ↪ target
 -/
 theorem mapsInto_via_narrowing
     {α : Type u} {P : Type v} {Q : Type w} {R : Type x}
@@ -308,7 +318,9 @@ namespace Unification
 
 universe u v w
 
+/- ## Unifiability -/
 
+/- atomic unifiability (non-empty intersection) -/
 def Unifiable {α : Type u} {P : Type v} {Q : Type w}
     [State α] [APatt α P] [APatt α Q]
     (p : P) (q : Q) : Prop :=
@@ -316,11 +328,7 @@ def Unifiable {α : Type u} {P : Type v} {Q : Type w}
 
 infix:50 " ⋈ " => Unifiable
 
-/--
-Unifiability relative to an equational theory. Its denotation remains semantic
-intersection; the theory tells automation which structural laws it may use
-when constructing and certifying the intersection witness.
--/
+/- unifiability modulo equational theory -/
 def UnifiableIn {α : Type u} {P : Type v} {Q : Type w}
     [State α] [APatt α P] [APatt α Q]
     (_theory : Theory) (left : P) (right : Q) : Prop :=
@@ -329,29 +337,23 @@ def UnifiableIn {α : Type u} {P : Type v} {Q : Type w}
 notation:50 left " ⋈[" theory "] " right =>
   UnifiableIn theory left right
 
-/-!
-The implementation is intentionally split into namespaces that can later
-become files.  `Problem` knows how to read Lean pattern closures, `Certificate`
-is the solver-neutral output format, `Free` is the native free-unification
-backend, `Dispatch` selects a backend from a theory, and `Exposure` controls
-the user-visible proof context.
--/
 
+/-
+`Problem` defines a way to represent patterns as meta expressions
+-/
+-- TODO: move this as part of Pattern?
 namespace Problem
 
-/-!
-`Problem` converts semantic pattern closures into the stable first-order
-equation seen by every backend. It owns binder saturation and source argument
-order, but it does not solve or certify the equation.
--/
-
-/-- A pattern closure saturated with fresh, pairwise distinct metavariables. -/
+/- transform patterns into meta objects. lambda binders get unwrapped. -/
+-- rename: APattMeta
+/- e.g., λx1. λx2. f x1 x2 is turned into: -/
 structure SaturatedPattern where
-  application : Expr
-  arguments : Array Expr
-  argumentNames : Array Name
+  application : Expr -- e.g., f ?x1 ?x2
+  arguments : Array Expr -- e.g., [?x1, ?x2]
+  argumentNames : Array Name -- e.g., [x1, x2]
 
-/-- The first-order equation sent to a unification backend. -/
+/- encodes the equation p1 = p2 for two patterns -/
+-- rename: APattEq
 structure Input where
   theory? : Option Expr := none
   lhs : SaturatedPattern
@@ -360,7 +362,8 @@ structure Input where
 def visibleName (fallback : String) (name : Name) : Name :=
   if name.isAnonymous then Name.mkSimple fallback else name.eraseMacroScopes
 
-/-- Saturate all explicit arguments of a pattern closure. -/
+/- Saturate all explicit arguments of a pattern closure. -/
+-- rename: APatt2Meta
 def saturatePattern (pattern : Expr) : MetaM SaturatedPattern := do
   let type ← inferType pattern
   let (arguments, binderInfos, _) ← forallMetaTelescopeReducing type
@@ -403,13 +406,15 @@ def symbolicArguments (problem : Input) : Array Expr :=
 end Problem
 
 
-namespace Dispatch
-
-/-!
+/-
 `Dispatch` interprets a declarative `Theory` only far enough to choose a
 unification algorithm. It owns no symbols or laws: other reasoning procedures
 may interpret the same theory through their own dispatch layers.
+
+function `backend : Theory -> Backend`
+determines which backend algorithm to use given a theory
 -/
+namespace Dispatch
 
 inductive Backend where
   | free
