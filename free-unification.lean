@@ -340,6 +340,7 @@ notation:50 left " ⋈[" theory "] " right =>
 
 /-
 `Problem` defines a way to represent patterns as meta expressions
+`ofUnifiableType` is the main functionality
 -/
 -- TODO: move this as part of Pattern?
 namespace Problem
@@ -353,7 +354,7 @@ structure SaturatedPattern where
   argumentNames : Array Name -- e.g., [x1, x2]
 
 /- encodes the equation p1 = p2 for two patterns -/
--- rename: APattEq
+-- rename: APattMetaEq
 structure Input where
   theory? : Option Expr := none
   lhs : SaturatedPattern
@@ -379,6 +380,7 @@ def saturatePattern (pattern : Expr) : MetaM SaturatedPattern := do
     argumentNames
   }
 
+/- turns object level unification hypothesis into meta-level APattMetaEq-/
 /-- Extract the optional theory and two patterns from a unifiability proposition. -/
 def ofUnifiableType (type : Expr) : MetaM Input := do
   let type ← instantiateMVars type
@@ -411,8 +413,8 @@ end Problem
 unification algorithm. It owns no symbols or laws: other reasoning procedures
 may interpret the same theory through their own dispatch layers.
 
-function `backend : Theory -> Backend`
-determines which backend algorithm to use given a theory
+`backend` is the main functionality
+(determines which backend algorithm to use given a theory)
 -/
 namespace Dispatch
 
@@ -467,35 +469,49 @@ def backend (theory : Expr) : MetaM Backend := do
 end Dispatch
 
 
-namespace Certificate
-
-/-!
+/-
 `Certificate` is the solver-neutral contract between computation and proof.
 It represents residual freedom with explicit basis variables and separately
 records candidate data, soundness, completeness, and concrete factorization.
--/
 
-/--
+`solutionSetType` is the main functionality
+-/
+namespace Certificate
+
+
+
+/-
 A solver-neutral unifier branch.
 
 Each `image` is a lambda over all `basisTypes`.  Consequently this structure
 contains no metavariables owned by a particular backend.  An AC backend can
 return several values of this type; the free backend returns at most one.
+
+(example)
+alternative ∃ u1, x1 = f(u1, c) ∧ x2 = c ∧ y1 = u1.
+for problem f(x1, x2) = f(f(y1, c), c):
+
+basisTypes = [Conf]
+images = [
+  fun u1 => f u1 c,    -- image of x1
+  fun u1 => c,         -- image of x2
+  fun u1 => u1         -- image of y1
+]
 -/
-structure Alternative where
+structure Alternative where -- = one unifier
   basisTypes : Array Expr
   images : Array Expr
   deriving Inhabited
+
+/-- The common result shape for unitary and multi-unifier backends. -/
+structure SolutionSet where -- = set of unifiers
+  alternatives : Array Alternative
 
 /-- A branch together with a kernel-checked proof of its factorization. -/
 structure ProvenAlternative where
   alternative : Alternative
   proposition : Expr
   proof : Expr
-
-/-- The common result shape for unitary and multi-unifier backends. -/
-structure SolutionSet where
-  alternatives : Array Alternative
 
 /--
 A computed solution set whose alternatives have each been checked to be
@@ -591,27 +607,7 @@ def solutionSetType
 end Certificate
 
 
-namespace C
 
-/-!
-This portion of `C` defines the logical contract for an operation that is free
-modulo commutativity. It is model-supplied recognition/proof data, distinct
-from the orientation-enumerating C backend defined below.
--/
-
-/--
-A binary operation that is free modulo commutativity.
-
-`Std.Commutative op` supplies the equation used to justify swapped terms.
-`eq_iff` is the constructor-decomposition principle needed to prove that the
-two orientations are complete.  Commutativity alone would not be sufficient:
-for example, a constant operation is commutative but has many extra equations.
--/
-class Operator {α : Type u} (op : α → α → α) extends Std.Commutative op where
-  eq_iff (a b c d : α) :
-    op a b = op c d ↔ (a = c ∧ b = d) ∨ (a = d ∧ b = c)
-
-end C
 
 
 namespace Free
@@ -764,7 +760,6 @@ def certifyFailureGoal : TacticM Unit := do
 end Free
 
 
-namespace C
 
 /-!
 The C backend is deliberately an adapter around the free backend. It expands
@@ -773,6 +768,20 @@ the right-hand term into every orientation permitted by registered
 orientation, and returns the resulting finite candidate set through the
 common `Certificate` interface.
 -/
+namespace C
+
+/--
+A binary operation that is free modulo commutativity.
+
+`Std.Commutative op` supplies the equation used to justify swapped terms.
+`eq_iff` is the constructor-decomposition principle needed to prove that the
+two orientations are complete.  Commutativity alone would not be sufficient:
+for example, a constant operation is commutative but has many extra equations.
+-/
+class Operator {α : Type u} (op : α → α → α) extends Std.Commutative op where
+  eq_iff (a b c d : α) :
+    op a b = op c d ↔ (a = c ∧ b = d) ∨ (a = d ∧ b = c)
+
 
 abbrev Candidate := Free.Candidate
 
@@ -993,14 +1002,14 @@ def expose (proven : Certificate.ProvenSolutionSet) : TacticM Unit := do
 end Exposure
 
 
-namespace Tactic
 
-/-!
+/-
 `Tactic` orchestrates the complete user command: parse the semantic problem,
 run a selected backend, check candidate soundness, emit completeness, and use
 `Exposure` to open the certified alternatives. It is the main replaceable
 frontend/backend boundary.
 -/
+namespace Tactic
 
 private structure SemanticWitnesses where
   actualArguments : Array Expr
@@ -1360,22 +1369,22 @@ elab "unify_complete" : tactic =>
   Unification.Completeness.run
 
 
-namespace Narrowing
 
-/-!
+/-
 `Narrowing` is an adapter around the generic unification API.  It extracts the
 structural equation between a rule LHS and a source-pattern term, delegates
 that equation to a backend, and reconnects the candidate substitutions to the
 rule RHS and both constraints.
 -/
+namespace Narrowing
 
-namespace Problem
 
-/-!
+/-
 `Narrowing.Problem` projects a rule closure and constrained source closure,
 saturates their shared variables once, and forms the structural equation
 `rule.lhs = source.term` consumed by unification.
 -/
+namespace Problem
 
 /-- A rule closure whose binders were saturated together exactly once. -/
 structure SaturatedRule where
